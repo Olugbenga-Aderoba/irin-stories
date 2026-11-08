@@ -10,7 +10,9 @@ This document defines the implementation sequence and release gates for the hack
 
 The MVP is limited to one authenticated storyteller, one story, one private 5 to 15-minute Yoruba source video, Yoruba transcription and approval, one explainable 90 to 150-second Story Cut, Yoruba cultural-expression review, English as the only target language, storyteller-approved English subtitles, sensitive-information review, one versioned Story Covenant, one active verified multilingual publication, and storyteller-controlled withdrawal. A source replacement is a new version in the same lineage, not a second source story.
 
-Here, “multilingual publication” means the Yoruba source with storyteller-approved English subtitles; Yoruba is the only source language and English is the only target language.
+Here, “multilingual publication” means the Yoruba source with storyteller-approved English subtitles; Yoruba is the only supported and demonstrated original language and English is the only functional share language in this MVP.
+
+The storyteller can record or upload without choosing an original language first. The system proposes an automatically detected original language; the storyteller must confirm or correct it before transcription, and detection is never authoritative by itself. Only a confirmed Yoruba original can proceed to transcription in this MVP. The storyteller chooses a share language through a selector designed for future expansion, but English is the only functional option and no other language is presented as currently supported.
 
 Background music, supplied photographs, and contextual material are not required for the MVP; if any are introduced, they require explicit storyteller approval before use. Never create synthetic reconstructions presented as real events or clone the storyteller's voice. Never infer truthfulness or create truth, credibility, or emotional-authenticity scores.
 
@@ -102,7 +104,7 @@ The storyteller uploads one private Yoruba source video approximately 5 to 15 mi
 
 - A source upload screen with supported-format/size guidance, progress, retry, and clear validation errors.
 - A private source preview with duration and upload status.
-- The storyteller confirms that the recording is Yoruba and chooses the source file. The client may preflight duration, but the server’s inspection is authoritative.
+- The storyteller chooses a recording or source file without selecting its language first. The system proposes an automatically detected original language; the storyteller must confirm or correct the proposal before transcription. Yoruba is the only original language supported in this MVP. The client may preflight duration, but the server’s media inspection is authoritative.
 
 ### 3. Application logic
 
@@ -113,6 +115,7 @@ The storyteller uploads one private Yoruba source video approximately 5 to 15 mi
 ### 4. Data requirements
 
 - Create a source-media artifact version with private storage key, owner/story IDs, checksum, byte size, MIME type, duration, stream metadata, and creation time.
+- Store the detected-language proposal and storyteller-confirmed or corrected original language with the source version; a detection proposal alone cannot authorize transcription.
 - Preserve the source media as the original. Store frame rate/timebase and stream start metadata needed to map later edits to exact source timestamps.
 - Keep rejected upload records or audit events, but do not retain unusable media longer than the defined cleanup policy.
 
@@ -137,6 +140,7 @@ The storyteller uploads one private Yoruba source video approximately 5 to 15 mi
 ### 8. AI responsibility
 
 - AI has no role in accepting, rejecting, or changing the uploaded source.
+- An automatically detected original language is only a proposal. The storyteller must confirm or correct it, and transcription cannot start while that choice is unconfirmed. In this MVP, only Yoruba can proceed.
 - No tool may infer truthfulness, credibility, or emotional authenticity from the recording.
 - Human approval of the corrected transcript is required before the source package is approved for Craft.
 
@@ -168,7 +172,7 @@ The storyteller reviews, corrects, and explicitly approves a Yoruba transcript f
 ### 3. Application logic
 
 - **Client:** edit transcript draft fields and display their source timestamps. No client action can mark a transcript approved.
-- **Server:** require accepted external-processing consent before sending audio; extract audio; call the transcription provider; validate structured output with Zod; store the output as an unapproved draft. Corrections create a new immutable transcript version. Approval pins a content hash and exact source-video version.
+- **Server:** require a storyteller-confirmed original language and accepted external-processing consent before sending audio; extract audio; call the transcription provider in the confirmed language; validate structured output with Zod; store the output as an unapproved draft. Corrections create a new immutable transcript version. Approval pins a content hash and exact source-video version.
 - Treat the approved source package as source-video version plus approved Yoruba transcript version. Do not allow Craft from an unapproved or stale transcript.
 
 ### 4. Data requirements
@@ -179,7 +183,7 @@ The storyteller reviews, corrects, and explicitly approves a Yoruba transcript f
 
 ### 5. Workflow states
 
-- **Requires:** `SOURCE_RECEIVED`, owner approval for external processing, and a valid source asset.
+- **Requires:** `SOURCE_RECEIVED`, a storyteller-confirmed original language, owner approval for external processing, and a valid source asset.
 - **Creates:** `TRANSCRIPT_DRAFT` while machine output or corrections are pending; `SOURCE_APPROVED` only after human approval of the exact transcript/source pair.
 - Editing a transcript after approval creates a draft version and removes current approval eligibility. Replacing the video invalidates all transcripts for Craft. If an approved-source change affects an active publication, mark that publication non-serving before accepting the change.
 
@@ -286,7 +290,8 @@ The storyteller reviews, edits, and approves English subtitles for the approved 
 
 - A bilingual subtitle editor showing the Yoruba source passage, source video/cut context, proposed English subtitle, and subtitle timing on the cut timeline.
 - The storyteller can edit text and timing, review the complete subtitle file in preview, and approve that exact version.
-- Clearly mark machine translation as a draft. Do not offer additional target languages.
+- The storyteller chooses a share language through a selector designed for future expansion. English is the only functional option in this MVP; do not present other languages as currently supported.
+- Clearly mark machine translation as a draft.
 
 ### 3. Application logic
 

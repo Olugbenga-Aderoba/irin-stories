@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Irin Stories",
-  description: "Irin Stories project starter",
+  description:
+    "Tell your story in your language. Shape it on your terms. Carry it across borders.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

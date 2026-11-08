@@ -32,7 +32,9 @@ The prototype supports:
 - A verified multilingual publication that satisfies the approval and provenance requirements in this file.
 - Storyteller-controlled withdrawal after publication.
 
-For the hackathon MVP, Yoruba is the only supported source language; English subtitles are the approved translation output. “Multilingual publication” refers to this Yoruba-to-English workflow, not support for multiple source languages.
+For the hackathon MVP, Yoruba is the only supported and demonstrated original language; English subtitles are the approved translation output, and English is the only functional share language. “Multilingual publication” refers to this Yoruba-to-English workflow; other languages are not supported in the MVP.
+
+The product UX does not require the storyteller to choose an original language before recording or uploading. The system proposes an automatically detected original language, but that proposal is never authoritative by itself: the storyteller must confirm or correct it before transcription. Only a confirmed Yoruba original can proceed to transcription in this MVP. The storyteller chooses a share language through a selector designed for future expansion; English is the only available option, and other languages must not be presented as currently supported.
 
 ## Product invariants
 
