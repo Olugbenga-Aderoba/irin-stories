@@ -65,6 +65,61 @@ Replaced the generic Next.js starter page with a warm, responsive Irin Stories l
 
 Accepted by human review before the Foundation commit.
 
+## Hosted Supabase development project link — 2026-11-09
+
+### Task
+
+Verify the local repository link to the existing hosted `irin-stories-dev` project using read-only project and migration inspection. Do not create or apply migrations or change hosted resources.
+
+### Summary
+
+Confirmed that the local Supabase CLI is authenticated and this repository is linked to `irin-stories-dev` (`hhuqadqruwhctjgtlvcp`, region `eu-west-3`). The project listing reported `linked: true` and `ACTIVE_HEALTHY`. Read-only remote migration inspection returned an empty migration list; there is no local `supabase/migrations` directory. No hosted schema or other resources were modified.
+
+### Tooling and link verification
+
+- Project-local Supabase CLI: `3.0.0`.
+- Authentication: existing local Supabase CLI authentication; no credentials were displayed or recorded.
+- The ignored `supabase/.temp/project-ref` matches the hosted project reference.
+- Machine-local files present under ignored `supabase/.temp`: `cli-latest`, `gotrue-version`, `linked-project.json`, `pooler-url`, `postgres-version`, `project-ref`, `rest-version`, `storage-migration`, and `storage-version`.
+- `supabase/.gitignore` excludes `.temp`; the root `.gitignore` excludes `.env` and `.env.*` files.
+
+### Files changed
+
+- `docs/codex-build-log.md` — this verification entry. No application code, Supabase configuration, or migration files changed.
+
+### Commands run
+
+- `npx supabase --version` — `3.0.0` (verified from the project-local CLI setup).
+- `npx supabase projects list --output json` — initial PowerShell extraction did not select the nested project result.
+- `npx supabase projects list` — confirmed the single matching project, its name, reference, region, healthy status, and `linked: true`.
+- `npx supabase migration list --remote` — read-only result: `migrations: []`. The CLI labeled its target environment `production` while identifying the project as `irin-stories-dev`.
+- `git status --short --branch` — clean before this build-log update.
+- `git check-ignore -v supabase/.temp/project-ref supabase/.temp/cli-latest .env .env.local .env.production` — confirmed local metadata and environment files are ignored.
+- `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
+- `git diff --check` and `git status` (final results recorded after this entry).
+
+### Failures encountered and fixes
+
+The first PowerShell extraction attempt did not select the nested project object in the CLI JSON response. Re-ran the read-only project listing and confirmed the expected project and `linked: true`. No CLI linking, migration-inspection, or repository validation failures occurred.
+
+### Final validation results
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed: 5 test files, 13 tests.
+- `npm run build` — passed; Next.js generated the landing page and demo workflow routes.
+- `git diff --check` — passed after this entry was added (Git reported the existing LF-to-CRLF working-copy notice).
+- Remote migration state — empty; no Irin Stories migrations need applying.
+- Hosted database schema, tables, policies, storage buckets, and authentication settings — unchanged by this task.
+
+### Known limitations
+
+- This task verified an existing CLI link and inspected migration history only. It did not implement or configure application authentication, database schema, storage, or any product workflow integration.
+
+### Human review decision
+
+Pending.
+
 ## Supabase local tooling initialisation — 2026-11-09
 
 ### Task
