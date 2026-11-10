@@ -560,3 +560,29 @@ Next dev emitted a non-fatal Cache Components diagnostic mentioning `Date.now()`
 - `git diff --check` — passed after this entry was added.
 
 Next dev continues to emit a non-fatal Cache Components diagnostic for `Date.now()` in the Tell route during prerendering. It did not fail the final test. The local Auth endpoint separately showed intermittent HTTP 504 request timeouts during investigation, then succeeded for the final repeated tests. Source duration and checksum are still client-reported and require later server/media verification. No hosted project operation or commit occurred.
+
+## Hosted private-source Tell infrastructure deployment — 2026-11-10
+
+### Preflight and migration
+
+- Started from clean Git HEAD `647ee007bf40cacf534a7449be131269be280102` (`feat: add authenticated private Tell workflow`). Supabase CLI authentication was confirmed by the project listing; both linked metadata and CLI identified `irin-stories-dev`, ref `hhuqadqruwhctjgtlvcp`.
+- Before deployment, remote history showed foundation `20261109090000` applied once and private-source `20261110090000` pending. The standard linked migration workflow applied only `20261110090000_private_source_storage.sql` from the committed Auth/Tell milestone. A CLI consent guard initially returned `HostedMutationConsentRequiredError` and reported that nothing changed; the explicitly authorized retry with `--yes` succeeded. No reset, fixture, seed, Auth setting, or unrelated Storage configuration change was run.
+- Post-deployment history reports each migration exactly once. No synthetic users, stories, source media, or other test records were created remotely.
+
+### Read-only remote verification
+
+- The `private-source` bucket exists with `public = false`, `file_size_limit = 524288000` bytes (500 MiB), and MIME types `video/mp4`, `video/quicktime`, and `video/webm`.
+- Storage policies present: `anonymous cannot access source bucket` (restrictive deny for this bucket); `storytellers upload source media to their stories`; `storytellers read their private source media`; and `storytellers remove only unregistered source uploads`. The authenticated upload/read/delete predicates bind `owner_id` and the first object-key folder to `auth.uid()` and verify the folder's story belongs to that user. No unrestricted anonymous object policy was found.
+- `public.register_source_media(uuid,uuid,text,text,text,bigint,bigint,bytea)` exists as `SECURITY DEFINER`; execute is granted to `authenticated` and not `anon`.
+- The public database foundation remains 20 tables with RLS enabled on all 20. Verification used a read-only transaction; it created no rows.
+
+### Application configuration and validation
+
+- Eventual Next.js environment variable names: `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. No values are recorded here.
+- Configure the hosted Auth Site URL to the deployed application origin. Add the exact callback `https://<deployed-app-host>/auth/callback` to the Auth redirect allow-list (and any explicitly supported preview origin callbacks). The application constructs the callback from `window.location.origin`. No hosted Auth settings were changed in this task.
+- `npm run lint` — passed; `npm run typecheck` — passed; `npm test` — passed, 6 files / 16 tests; `npm run build` — passed; `git diff --check` — recorded after this entry.
+- `npm run e2e` used LOCAL Supabase only and returned 1 passed / 1 failed. The anonymous redirect passed; Auth/Tell timed out while remaining on `/sign-in`. LOCAL Auth logs show `/signup` HTTP 504 after 18,244 ms and `/token` HTTP 504 after 10,067 ms (`request_timeout`); Auth and Storage health probes returned HTTP 200 and local PostgreSQL was reachable. The hosted database was not used as fallback.
+
+### Remaining risks and limits
+
+The local Auth timeout prevents this deployment run's E2E suite from passing; the migration itself and remote read-only checks succeeded. Hosted Auth redirect configuration and application runtime variables remain to be configured separately. The bucket cap is 500 MiB, but the hosted project's global Storage upload limit must also permit that size before 500 MiB uploads can work. Source duration and checksum are still client-reported and require later server/media verification. The Next dev Cache Components `Date.now()` diagnostic remains known from local development. No Verify workflow was started, no secret was recorded, and no commit was created for this deployment report.
