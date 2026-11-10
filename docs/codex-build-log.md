@@ -414,3 +414,39 @@ The harness ran twice on LOCAL `127.0.0.1:54322`; all 16 scenario checks passed;
 The CLI returns exit status 1 for the sentinel rollback, while its error payload contains the full matrix with `passed: true` for each check. No production migration SQL was modified; no schema defect was found. No hosted Supabase operation was run. Human review decision: pending.
 
 Application validation after the final harness/docs edits: `npm run lint`, `npm run typecheck`, `npm test` (5 files / 13 tests), `npm run build`, and `git diff --check` all passed.
+
+## Apply validated foundation to hosted development database — 2026-11-10
+
+### Task and source
+
+Apply only the committed and locally validated foundation migration to the linked development project. Source commit: `c90ce12d9c6d11aebff096dd81b2fbf32b7189c3` (`feat: add validated Irin Stories database foundation`). Project verified by authenticated Supabase CLI listing: `irin-stories-dev`, reference `hhuqadqruwhctjgtlvcp`. The working tree was clean before starting.
+
+### Migration result
+
+Remote migration history was inspected first and showed `20261109090000` pending. The standard explicit remote command applied only `20261109090000_irin_stories_mvp_foundation.sql`, with Vault updates skipped. The command completed successfully and reported that one migration was applied with no seeds or roles. A subsequent read-only migration-history query showed local and remote version `20261109090000` exactly once.
+
+### Remote read-only verification
+
+- Public tables: 20.
+- Tables with RLS enabled: 20/20.
+- Public policies: 25; owner-scoped `SELECT` policies and the expected owner insert/update, approval, privacy-decision, and publication-withdrawal policies were listed.
+- Functions in `public` and `irin_private`: 41.
+- `public.get_published_story(uuid)`: present and executable by `anon`.
+- Anonymous direct privileges over public base tables: 0.
+- Rows across all 20 Irin Stories tables: 0. No synthetic, sample, or storyteller records were created.
+
+No seed data, remote test harness, Auth setting, Storage bucket, or application code was changed.
+
+### Local application validation
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed: 5 files, 13 tests.
+- `npm run build` — passed.
+- `git diff --check` — passed after this log update.
+
+### Warnings and limitations
+
+The CLI labels the linked target environment as `production` in command output, while the authenticated project listing confirmed the exact project name `irin-stories-dev` and reference above; the requested reference was used explicitly. An initial `db push` without `--remote` correctly selected LOCAL, reported no migrations, and made no hosted change. The successful push explicitly used `--remote=hhuqadqruwhctjgtlvcp --skip-vault`. The CLI noted that a newer version is available; no upgrade was performed. No credentials, access tokens, passwords, service-role keys, JWT secrets, or private connection strings are recorded here.
+
+No commit was created for this build-log update.
