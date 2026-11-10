@@ -8,7 +8,9 @@ This document defines the implementation sequence and release gates for the hack
 **Core principle:** AI proposes. The storyteller decides.  
 **Core workflow:** Tell -> Verify -> Craft -> Translate -> Protect -> Publish.
 
-The MVP is limited to one authenticated storyteller, one story, one private 5 to 15-minute Yoruba source video, Yoruba transcription and approval, one explainable 90 to 150-second Story Cut, Yoruba cultural-expression review, English as the only target language, storyteller-approved English subtitles, sensitive-information review, one versioned Story Covenant, one active verified multilingual publication, and storyteller-controlled withdrawal. A source replacement is a new version in the same lineage, not a second source story.
+For the hackathon demonstration, begin with one authenticated storyteller and one story. This is demonstration scope only: an authenticated account may own multiple stories. Each story independently follows Tell, Verify, Craft, Translate, Protect, and Publish. Ownership and RLS apply per story, and creating a second story must not be blocked by database constraints or policies.
+
+The demo story uses one private 5 to 15-minute Yoruba source video, Yoruba transcription and approval, one explainable 90 to 150-second Story Cut, Yoruba cultural-expression review, English as the only target language, storyteller-approved English subtitles, sensitive-information review, one versioned Story Covenant, one active verified multilingual publication, and storyteller-controlled withdrawal. A source replacement creates a new version in that story's lineage, not a new story.
 
 Here, “multilingual publication” means the Yoruba source with storyteller-approved English subtitles; Yoruba is the only supported and demonstrated original language and English is the only functional share language in this MVP.
 
@@ -36,7 +38,7 @@ The following `AGENTS.md` invariants are release gates throughout this plan:
 
 ### 1. User outcome
 
-The single storyteller can sign in, see a private empty workspace, and start one draft story. No media is processed or published in this stage.
+The demo storyteller can sign in, see a private empty workspace, and start the initial draft story. The account may create more stories, each with its own workflow and owner-scoped access. No media is processed or published in this stage.
 
 ### 2. User interface
 
@@ -90,7 +92,7 @@ The single storyteller can sign in, see a private empty workspace, and start one
 
 ### 10. Acceptance criteria
 
-- One authenticated storyteller can create and reopen the single private MVP story; a second story is rejected. An unauthenticated user cannot access it.
+- The demonstration begins with one private story. An authenticated account can create and reopen multiple stories; creating a second story is allowed. Each story is independently owner-scoped, and an unauthenticated user cannot access any story.
 - The server derives ownership from the session and RLS rejects cross-owner access.
 - No media, AI calls, or publication are available in this state.
 
@@ -603,9 +605,9 @@ The storyteller receives a workflow that fails safely when state, ownership, pro
 
 ## B. Proposed data-model summary
 
-Use the smallest model that retains ownership, immutable versions, exact lineage, and auditable decisions. Supabase Auth is the storyteller identity; do not duplicate it in a `storytellers` table for the one-user MVP.
+Use the smallest model that retains ownership, immutable versions, exact lineage, and auditable decisions. Supabase Auth is the storyteller identity; do not duplicate it in a `storytellers` table for the one-story demonstration.
 
-1. **`stories`** — owner ID, draft/workflow state, current source package IDs, publication pointer/access state, created/updated timestamps. Enforce one MVP story per storyteller.
+1. **`stories`** — owner ID, draft/workflow state, current source package IDs, publication pointer/access state, created/updated timestamps. Allow one owner to have many stories; each story has its own workflow and RLS ownership checks.
 2. **`artifact_versions`** — common immutable version registry: story ID, kind, version number, parent/source artifact IDs, status, creator, creation time, content hash. Use it for source, transcript, cultural review, Story Cut, translation, privacy review, Covenant, and rendered media versions.
 3. **`media_assets`** — artifact ID, private bucket/key, checksum, MIME type, size, duration, stream/frame rate and timebase metadata.
 4. **`transcript_segments`** — transcript artifact ID, source-media artifact ID, segment order, source start/end timestamp, Yoruba text.
@@ -670,7 +672,7 @@ Each stage is complete only when its acceptance criteria and automated tests pas
 - **Stale approvals and lineage gaps:** edits can leave downstream versions apparently approved. Use immutable artifact versions, explicit parent references, content hashes, centralized server-side gate checks, and tests for every invalidation edge.
 - **Withdrawal and copies:** already downloaded copies cannot be recalled; caches and long-lived URLs may continue serving. Avoid public buckets and long-lived signed URLs, proxy media through fresh access checks, disable caching, abort active streams where feasible, and communicate the irretrievable-copy limitation.
 - **RLS/service-role bypass:** a privileged server key can bypass database policies. Isolate privileged operations in narrow server modules, perform explicit owner/state checks, never expose keys, and test access with multiple synthetic users.
-- **MVP scope/time:** cultural review, privacy resolution, auditability, rendering, and publication security can expand quickly. Keep one source language, one target language, one storyteller, one cut, and one publication; defer all non-required experiences listed below.
+- **MVP scope/time:** cultural review, privacy resolution, auditability, rendering, and publication security can expand quickly. Keep the demonstration to one storyteller, one story, one cut, and one publication while preserving multi-story account ownership. Keep one source language and one target language; defer all non-required experiences listed below.
 
 ## H. Features deferred until after the hackathon
 

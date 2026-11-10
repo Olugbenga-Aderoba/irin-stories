@@ -232,3 +232,185 @@ No lint, typecheck, test, or build failures occurred during this refinement. No 
 ### Human review decision
 
 Accepted by human review before the Foundation commit.
+
+## First local database migration — 2026-11-09
+
+### Task
+
+Design the minimum robust PostgreSQL foundation for the Irin Stories MVP, create one local Supabase migration and document the data model. The migration must not be applied to the hosted project.
+
+### Summary
+
+Added a versioned relational model for story ownership, private source-media metadata, proposed and confirmed original language, Yoruba transcript segments, explainable timestamped Story Cut segments, cultural review, English subtitle lineage, privacy findings and storyteller decisions, versioned Covenant permissions, exact-hash approvals, immutable publication snapshots, separate publication access state, and append-only audit events. Added dependency-aware current-approval checks, owner-scoped RLS on all public base tables, and a public-safe publication directory view. Language proposals and confirmations are server-written so confirmed changes can invalidate dependent approvals, stale a live publication, and return the workflow to language confirmation in the same transaction.
+
+### Files changed
+
+- `supabase/migrations/20261109090000_irin_stories_mvp_foundation.sql`
+- `docs/data-model.md`
+- `docs/codex-build-log.md`
+
+### Tests added
+
+- No automated application tests were added. Static SQL structure/security checks and the existing application test suite were run.
+
+### Commands run
+
+- `npx supabase --version` — `3.0.0`.
+- `npx supabase db lint --local --schema public --fail-on error` — targeted only the local stack at `127.0.0.1:54322`; it could not connect because the local database runtime is not running.
+- Static SQL review — balanced lexical structure; 22 public tables, all 22 included in the RLS setup; all requested workflow states present; no `DROP`, unrestricted `USING (true)`/`WITH CHECK (true)`, credential pattern, or authenticated insert path for language reviews; only the public-safe directory is granted to `anon`.
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed: 5 files, 13 tests.
+- `npm run build` — passed.
+- `git diff --check` — passed.
+- `git status` — captured after validation.
+
+### Failures encountered and fixes
+
+1. The first Supabase CLI lint invocation was blocked while the CLI attempted to write telemetry under the user profile. Reran with CLI telemetry disabled for that command; the CLI then confirmed it was targeting only the local stack and reported connection refused because PostgreSQL was not running.
+2. No PostgreSQL parser/runtime (`psql`, Docker, `pg_format`, or `sqlfluff`) is available in this environment, so server-side SQL parsing could not be completed. The migration received static lexical, relationship, RLS, privilege, lineage, and destructive-statement review instead. No hosted or local database was changed.
+3. Review tightened dependency-aware approval checks, made language confirmation server-only, and made newly sealed artefact versions reset workflow state to the affected review stage.
+
+### Final validation results
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed: 5 files, 13 tests.
+- `npm run build` — passed.
+- Static SQL/security review — passed; PostgreSQL execution-level validation remains unavailable until a local database runtime is provided.
+- Hosted Supabase project — migration was not applied; no hosted database resources were modified.
+
+### Known limitations
+
+- The migration has not been applied or parsed by a running PostgreSQL server. It should receive a local Supabase database lint and migration rehearsal before any separately authorized remote push.
+- Storage buckets and object policies, workflow APIs, Auth UI, language detection, transcription, translation generation, media processing, and publication serving are not implemented.
+- Application-side canonical content hashing and transactional workflow orchestration remain required; the database checks supplied hashes and exact version bindings but does not calculate SHA-256 for artefact content.
+
+### Human review decision
+
+Pending.
+
+## Critical database architecture review - 2026-11-09
+
+### Task
+
+Review and refine the local Irin Stories foundation migration for multi-story ownership, table complexity, duration/language flexibility, PostgreSQL immutability, approval integrity, Supabase RLS, public-read security, and future Storage readiness. Do not apply the migration.
+
+### Changes
+
+- Revised the foundation migration from 22 to 20 tables. Removed the timestamp-derivable cut/transcript junction and merged rendered-media lineage into `media_assets` while retaining exact source, transcript, cut, translation, and snapshot references.
+- Confirmed one Auth user can own many stories; no unique owner constraint or one-story RLS assumption remains.
+- Replaced hard 5-15-minute and 90-150-second database rules with positive duration, increasing timestamp, and source/cut timeline bounds. Kept Yoruba-to-English scope in workflow guards while language columns remain extensible.
+- Replaced the owner-privileged public directory view with a narrow `SECURITY DEFINER` publication RPC using an empty fixed `search_path`, explicit current-publication and Covenant checks, full snapshot validation, and allowlisted public fields.
+- Tightened privacy edit decisions to reference a later approved version with matching source/transcript lineage. Added per-story row locking for version allocation and ordered privacy reviews by their numeric artifact version.
+- Added `docs/database-review.md` with the risk/decision log, table justification, RLS access and mutability matrices, deferred work, and execution-validation requirements. Rewrote `docs/data-model.md` to match the revised schema and storage/public-read model.
+
+### Files changed
+
+- `supabase/migrations/20261109090000_irin_stories_mvp_foundation.sql`
+- `docs/data-model.md`
+- `docs/database-review.md`
+- `docs/codex-build-log.md`
+
+No application code changed.
+
+### Validation
+
+- Static SQL review: 20 tables; all 20 RLS-enabled/covered (19 owner-scoped child tables plus explicit `stories` policy); all security-definer functions have `SET search_path = ''`; no `DROP`; no unrestricted private policy; no anonymous base-table grant; only the public lookup RPC is executable by `anon`; no one-story owner uniqueness; no hard hackathon duration ranges; required workflow states present; UUID IDs and 32-byte SHA-256 checks retained; delimiter scan balanced; no obvious credential material found.
+- `npm run lint`  -  passed.
+- `npm run typecheck`  -  passed.
+- `npm test`  -  passed: 5 files, 13 tests.
+- `npm run build`  -  passed.
+- `git diff --check`  -  passed.
+
+### Failures encountered and fixes
+
+The review identified the one-story-per-user restriction, permanent duration ranges, unsafe view-owner semantics, redundant tables, and an unbound privacy edit decision. These were corrected in the local migration and reflected in the documentation. No application validation failed.
+
+### Remaining validation and limitations
+
+No PostgreSQL parser/runtime (`psql`, Docker, `pg_format`, or `sqlfluff`) is available. Static delimiter and schema-policy checks are not a substitute for executing PostgreSQL DDL. A Docker-compatible local Supabase runtime is required for the next execution-validation stage; that stage must remain local and separately authorized. The migration was **not applied locally or to the hosted Supabase project**.
+
+`docs/implementation-plan.md` still contains the Foundation wording "A second story is rejected" and "Enforce one MVP story per storyteller." The architecture now supports multiple stories; the suggested minimal plan edit is to describe one seeded demo story while allowing multiple owned stories. The plan file was not modified in this review.
+
+
+## Implementation plan ownership wording correction - 2026-11-09
+
+Clarified in `docs/implementation-plan.md` that one storyteller and one story describe the hackathon demonstration only. An authenticated account may own multiple stories; each has independent Tell-to-Publish workflow and per-story ownership/RLS, and the database must not block a second story. Updated the Foundation outcome/acceptance criteria and proposed `stories` model accordingly. No application code, SQL migration, package files, or Supabase resources changed.
+
+## Local Supabase migration validation - 2026-11-10
+
+### Task
+
+Resume local-only PostgreSQL execution validation for the existing foundation migration. Do not modify the hosted `irin-stories-dev` project.
+
+### Result
+
+`npx supabase db reset --local` completed successfully against `127.0.0.1:54322` and applied `20261109090000_irin_stories_mvp_foundation.sql`. No SQL correction was made. Catalog inspection found 20 public tables, 10 enums, 73 foreign keys, 68 checks, 53 indexes, 41 functions, and 25 policies; all 20 public tables enabled RLS. A rollback-only RLS check passed multiple-story creation, owner isolation, forged-owner rejection, and anonymous denial across 12 private tables. Unresolved privacy approval and final-media gates rejected the synthetic case as expected.
+
+Docker Desktop then returned HTTP 500 from its `desktop-linux` engine during a synthetic publication validation, and its status changed to `stopping`. The transaction returned no completion result. The public RPC/withdrawal/provenance fixture, cross-story test results, second clean reset, and local full-service startup could not be confirmed. An attempted Docker Desktop restart did not recover the engine; its Windows service remained stopped and could not be opened by the current session.
+
+### Validation
+
+- `npm run lint` - passed.
+- `npm run typecheck` - passed.
+- `npm test` - passed: 5 files, 13 tests.
+- `npm run build` - passed.
+- `git diff --check` - passed before documentation updates; rerun after this entry.
+
+### Configuration and limitations
+
+`supabase/config.toml` remains at `health_timeout = "10m"` as requested for the first successful local validation. The local reset reported that the configured `supabase/seed.sql` path has no matching file; this did not block migration application. No credentials, tokens, passwords, or connection strings with credentials are recorded. No change was applied to the hosted project.
+
+## Local database test continuation — 2026-11-10
+
+### Task and result
+
+Continue only the outstanding LOCAL PostgreSQL tests. A clean reset/replay was confirmed by direct query to `127.0.0.1:54322`: 20 public tables, all 20 RLS-enabled. The reset CLI output terminated after schema initialization without a final success line; Docker API health inspection was inaccessible. The local database remained reachable through `supabase db query`.
+
+The targeted lineage, approval, valid-publication, anonymous RPC, and withdrawal/retention runtime fixtures were not completed and remain unverified. The migration declaration lists the public RPC fields, but that was not represented as successful invocation evidence. `health_timeout = "10m"` was retained because it helped the initial successful local startup and did not cause the Docker API inspection issue.
+
+### Files updated
+
+- `docs/local-database-test-report.md`
+- `docs/database-review.md`
+- `docs/data-model.md`
+- `docs/codex-build-log.md`
+
+### Application validation
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed, 5 files / 13 tests.
+- `npm run build` — passed.
+- `git diff --check` — passed before final documentation edits; rerun after edits.
+
+No CLI upgrade, hosted operation, commit, or schema edit was performed. Human review decision: pending. Remaining limitations: local runtime cases listed above are not proven.
+
+## Outstanding local DB fixture attempt — 2026-11-10
+
+Read `AGENTS.md`, the local database test report, data model, and foundation migration. The local database was reachable and empty after the prior clean replay. This follow-up did not complete the transaction fixture needed to validate cross-story constraint rejection, exact-target and cross-owner approval rejection, valid publication/RPC fields, and post-withdrawal provenance retention. These cases remain unverified; no triggers were disabled and no publication was synthesized outside the guarded workflow. No local database-changing SQL or hosted operation was run.
+
+Documentation updated: `docs/local-database-test-report.md`, `docs/database-review.md`, `docs/data-model.md`, and this log. Human review decision pending.
+
+## Foundation database integration harness — 2026-11-10
+
+### Task
+
+Create a repeatable synthetic local integration harness and execute the remaining lineage, approval, publication/RPC, withdrawal, and provenance scenarios. Do not change the foundation migration unless a runtime test proves a defect.
+
+### Files changed
+
+- `supabase/tests/irin_stories_foundation_test.sql`
+- `docs/local-database-test-report.md`
+- `docs/database-review.md`
+- `docs/data-model.md`
+- `docs/codex-build-log.md`
+
+### Results
+
+The harness ran twice on LOCAL `127.0.0.1:54322`; all 16 scenario checks passed; the additional predicate diagnostic also matched expected published state. It exercises two cross-story lineage rejections; multiple-target, cross-owner, malformed-hash, and cross-story approval rejections; a fully guarded publication path; anonymous RPC invocation and exact field allowlisting; owner withdrawal; and retained snapshot, seven approvals, Covenant, ten Covenant permission rows, seven typed provenance rows, and 17 audit events. Both executions use deterministic synthetic IDs and roll back through an intentional final sentinel exception. A follow-up query confirmed no synthetic users/stories persisted.
+
+The CLI returns exit status 1 for the sentinel rollback, while its error payload contains the full matrix with `passed: true` for each check. No production migration SQL was modified; no schema defect was found. No hosted Supabase operation was run. Human review decision: pending.
+
+Application validation after the final harness/docs edits: `npm run lint`, `npm run typecheck`, `npm test` (5 files / 13 tests), `npm run build`, and `git diff --check` all passed.
