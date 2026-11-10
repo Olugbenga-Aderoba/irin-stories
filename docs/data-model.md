@@ -4,7 +4,7 @@
 
 This local-only schema supports multiple stories per Supabase Auth user. `stories.owner_id` references `auth.users.id`, with no unique constraint on `owner_id`; one Auth user can own many stories. A child row carries `story_id` and reaches its owner through `stories`. A separate profile or password table is unnecessary for the MVP.
 
-The migration creates no Storage buckets. It was applied to the disposable local Supabase database on 2026-11-10; it has not been applied to any hosted database. `media_assets` stores a `bucket_id` and private `object_key`, never a public URL. The functional MVP remains Yoruba source stories shared in English. Language columns use validated text codes so adding another supported language later does not require a structural schema change; workflow guards enforce Yoruba and English for this MVP.
+The foundation migration creates no Storage buckets. Follow-up migration `20261110090000_private_source_storage.sql` defines a private `private-source` bucket and owner-bound policies; it is not applied to a hosted project by this task. `media_assets` stores a `bucket_id` and private `object_key`, never a permanent public URL. The follow-up migration adds the original filename and an auth-bound source registration RPC. The functional MVP remains Yoruba source stories shared in English. Language columns use validated text codes so adding another supported language later does not require a structural schema change; workflow guards enforce Yoruba and English for this MVP.
 
 ## Entities and relationships
 
@@ -77,7 +77,9 @@ No Storage bucket is created by this migration. `media_assets.bucket_id` and `me
 - derived private media: `private-derived/{owner_id}/{story_id}/{artifact_id}/...`
 - final publication media: `publications/{publication_public_id}/{snapshot_version}/...`
 
-Use private buckets for source, intermediate, and final objects. Future Storage policies must verify owner/story/path binding for source and derived objects. Final-publication reads must resolve an explicitly active publication and check access on every request; withdrawal must block later reads. Avoid long-lived signed URLs and caches that outlive withdrawal. No database row in this migration stores a public URL.
+The follow-up Auth/Storage migration creates only the `private-source` bucket. Source keys use `{owner_id}/{story_id}/{media_id}/{sanitized_filename}`; Storage policies bind the first folder to `auth.uid()` and the second folder to an owned story. Reads require an authenticated matching owner. Cleanup DELETE is limited to unregistered uploads; registered source metadata and objects are append-only through the client policy. Source playback currently uses a one-hour signed URL, which is private and temporary but remains a bearer URL until expiry. Future derived and final-publication objects require separately designed access controls. No database row stores a permanent public URL.
+
+Authenticated story creation runs through `public.create_story()`, which supplies `owner_id` from `auth.uid()` and exposes no owner parameter. Source registration runs through `public.register_source_media(...)`, which validates the authenticated owner, story, bucket path, upload metadata, and Storage object owner before sealing the SOURCE_MEDIA artifact. The database audit trigger records registration. Client-supplied `owner_id` is never used by the app.
 
 ## Approvals, privacy, and Covenant
 

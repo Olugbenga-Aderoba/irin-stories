@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { SiteHeader } from "@/components/site-header";
 import { WorkflowProgress } from "@/components/workflow-progress";
-import { DEMO_LANGUAGE_METADATA } from "@/lib/workflow";
 
 function StoryArtwork() {
   return (
@@ -32,7 +31,7 @@ function StoryArtwork() {
   );
 }
 
-export function HomePage() {
+export function HomePage({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <div className="marketing-page">
       <a className="skip-link" href="#main-content">
@@ -58,17 +57,17 @@ export function HomePage() {
                 faithful, multilingual digital stories while keeping the storyteller in control.
               </p>
               <div className="hero-actions">
-                <Link className="button button--primary" href="/story/demo/tell">
-                  Start your story <span aria-hidden="true">↗</span>
+                <Link className="button button--primary" href={signedIn ? "/workspace" : "/sign-in"}>
+                  {signedIn ? "Open your workspace" : "Start your story"} <span aria-hidden="true">↗</span>
                 </Link>
-                <span className="hero-action-note">Explore a static demo · uploads are not enabled</span>
+                <span className="hero-action-note">A private space, shaped by you</span>
               </div>
             </div>
 
             <div className="hero-visual-wrap">
               <div className="hero-visual-note hero-visual-note--top">
                 <span className="note-dot note-dot--orange" />
-                {DEMO_LANGUAGE_METADATA.original.detected.name} demo · {DEMO_LANGUAGE_METADATA.share.selected.name} subtitles
+                A story, held with care
               </div>
               <StoryArtwork />
               <div className="hero-visual-note hero-visual-note--bottom">
@@ -121,8 +120,8 @@ export function HomePage() {
               <p className="eyebrow">Your story. Your terms.</p>
               <h2>Begin with what you want to say.</h2>
             </div>
-            <Link className="button button--outline" href="/story/demo/tell">
-              Start your story <span aria-hidden="true">↗</span>
+            <Link className="button button--outline" href={signedIn ? "/workspace" : "/sign-in"}>
+              {signedIn ? "Open your workspace" : "Start your story"} <span aria-hidden="true">↗</span>
             </Link>
           </div>
         </section>
@@ -132,7 +131,7 @@ export function HomePage() {
         <div className="footer-inner mx-auto flex w-full max-w-7xl items-center justify-between px-5 sm:px-8">
           <span className="footer-brand">Irin Stories</span>
           <span>African voices, across every border.</span>
-          <span className="footer-demo">Static prototype</span>
+          <span className="footer-demo">Private storyteller workspace</span>
         </div>
       </footer>
     </div>

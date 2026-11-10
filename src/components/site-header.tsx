@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
+import { signOut } from "@/app/auth/actions";
 
 type SiteHeaderProps = {
   variant?: "marketing" | "workspace";
@@ -14,13 +15,8 @@ export function SiteHeader({ variant = "marketing" }: SiteHeaderProps) {
             <BrandMark />
           </Link>
           <div className="header-tools">
-            <span className="demo-pill">
-              <span aria-hidden="true" className="demo-pill-dot" />
-              Demo workspace
-            </span>
-            <Link className="back-link" href="/">
-              <span aria-hidden="true">←</span> Home
-            </Link>
+            <Link className="back-link" href="/workspace">My stories</Link>
+            <form action={signOut}><button className="back-link header-signout" type="submit">Sign out</button></form>
           </div>
         </div>
       </header>
@@ -40,7 +36,7 @@ export function SiteHeader({ variant = "marketing" }: SiteHeaderProps) {
           <a className="nav-text-link" href="#principle">
             Our promise
           </a>
-          <Link className="nav-cta" href="/story/demo/tell">
+          <Link className="nav-cta" href="/sign-in">
             Start your story <span aria-hidden="true">↗</span>
           </Link>
         </nav>

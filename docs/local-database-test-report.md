@@ -156,3 +156,11 @@ Created and executed `supabase/tests/irin_stories_foundation_test.sql` twice aga
 | Audit history retained | YES | 17 events | PASS, including publication and withdrawal events. |
 
 No production migration SQL was changed. No database defect was demonstrated. No hosted command or project was used. The harness itself is intentionally single-use-transaction/rollback and can be rerun; it does not persist fixtures. Its final sentinel is an expected test mechanism, not a scenario failure.
+
+## Auth and private source Storage follow-up — 2026-11-10
+
+Added migration `20261110090000_private_source_storage.sql` and synthetic rollback-only policy harness `supabase/tests/private_source_storage_test.sql`. The migration defines the private 500 MiB `private-source` bucket, owner/story-bound Storage INSERT/SELECT, cleanup-only deletion for unregistered objects, `create_story()` (owner from `auth.uid()`), and `register_source_media(...)` (atomic artefact/media metadata sealing and audit trigger). The migration was not applied locally or hosted during this run.
+
+Local replay was attempted with `npx supabase migration up --local`; the CLI confirmed `Target: local stack (127.0.0.1:54322)` and then returned `DbConnectError: failed to connect to postgres: failed to connect to host=127.0.0.1 user=postgres database=postgres: Connection terminated unexpectedly`. Therefore Storage policy SQL, Auth functions, and Storage API behavior remain unexecuted. No hosted target was selected. The application unit suite passed (6 files, 16 tests); lint, typecheck, and build passed. The Playwright suite was added but not run because the disposable local Auth/Storage stack is unavailable.
+
+No database or hosted Auth/Storage change was made. The migration needs local SQL execution and Storage HTTP/API authorization coverage before hosted deployment. The bucket config raises the local global Storage limit to 500 MiB and sets local password minimum to eight characters; hosted Auth redirect allowlists and hosted global Storage limits remain unchanged and will require separate review/configuration before deployment.

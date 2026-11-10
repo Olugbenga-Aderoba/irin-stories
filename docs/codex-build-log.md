@@ -450,3 +450,113 @@ No seed data, remote test harness, Auth setting, Storage bucket, or application 
 The CLI labels the linked target environment as `production` in command output, while the authenticated project listing confirmed the exact project name `irin-stories-dev` and reference above; the requested reference was used explicitly. An initial `db push` without `--remote` correctly selected LOCAL, reported no migrations, and made no hosted change. The successful push explicitly used `--remote=hhuqadqruwhctjgtlvcp --skip-vault`. The CLI noted that a newer version is available; no upgrade was performed. No credentials, access tokens, passwords, service-role keys, JWT secrets, or private connection strings are recorded here.
 
 No commit was created for this build-log update.
+
+## Authentication and private source-media foundation — 2026-11-10
+
+### Task
+
+Implement Supabase Auth session handling, protected storyteller workspace, multiple-story creation, and private Tell-stage source upload only. Do not implement language detection, transcription, or downstream workflow stages. Keep `irin-stories-dev` untouched.
+
+### Changes
+
+- Added `@supabase/ssr` and `@supabase/supabase-js` clients, cookie-backed SSR session refresh in `src/proxy.ts`, Auth callback/sign-in/sign-out, protected workspace, and `auth.uid()`-owned `create_story()` RPC.
+- Replaced the public demo CTA and Tell route with owner-scoped stories and Tell upload UI. Language detection is explicitly pending; English remains the only share choice.
+- Added resumable TUS upload with byte progress/retries; MP4/MOV/WebM validation; 500 MiB max; duration guidance only; streaming SHA-256; private playback by one-hour signed URL; atomic source metadata/artifact registration and audit event.
+- Added migration `20261110090000_private_source_storage.sql`, rollback-only Storage policy integration harness, Vitest unit tests, and local-only Playwright tests.
+- Updated local `supabase/config.toml` to 500 MiB Storage maximum, eight-character password minimum, and local Auth callback redirects.
+
+### Database execution and hosted safety
+
+Attempted only `supabase migration up --local`. CLI confirmed `Target: local stack (127.0.0.1:54322)` then failed with `DbConnectError: failed to connect to postgres: ... Connection terminated unexpectedly`. The new migration and SQL Storage test therefore remain unexecuted. No workaround or schema mutation was attempted. No remote migration, remote SQL, hosted Auth or Storage setting, or hosted project operation was performed. The foundation migration was not changed. No service-role key or other secret was added.
+
+### Validation
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed after correcting Supabase `getClaims()` result access.
+- `npm test` — passed, 6 files / 16 tests.
+- `npm run build` — passed after removing incompatible `force-dynamic` route config and using Cache Components' request-time route behavior.
+- `git diff --check` — passed after documentation edits.
+- `npm run test:e2e -- --list` — passed; Playwright discovered two local-only cases. The browser flows were not executed.
+- Playwright browser suite — added, not run because the local Supabase Auth/Storage endpoint is unavailable.
+
+Known limitations: uploaded duration and SHA-256 are client-reported, not independently probed; files whose duration cannot be read are blocked because the existing schema requires a positive duration; one-hour signed source playback URLs are bearer URLs until expiry; local policies/RPC and hosted settings have not been executed/verified. `npm install` reported seven moderate audit findings; no dependency audit/fix was requested or run. Human review decision pending. No commit was created.
+
+## Local Auth + private Tell validation — 2026-11-10
+
+### Task and scope
+
+Validate the existing Auth/private-source implementation using only synthetic local accounts and media. No language detection, transcription, hosted migration, Auth, Storage, or database operation was performed against `irin-stories-dev`.
+
+### Local migration
+
+Confirmed the foundation migration and the private-source migration were present locally. The first local application of `20261110090000_private_source_storage.sql` failed with PostgreSQL `syntax error at end of input (SQLSTATE 42601)` in `register_source_media()`'s MIME/extension `CASE` predicate. Replaced that expression with an equivalent explicit boolean predicate. With the user-visible confirmation `TARGET = LOCAL; DATABASE = 127.0.0.1:54322`, ran one local reset/replay; both foundation and private-source migrations reapplied successfully. No hosted target was used.
+
+### Runtime tests and diagnosis
+
+- The original SQL harness attempted direct `INSERT`/`DELETE` on `storage.objects`; PostgreSQL rejected it with `Direct deletion from storage tables is not allowed. Use the Storage API instead.` Reworked it as a read-only RLS/provenance verifier and added `supabase/tests/private_source_storage_api_test.mjs` for actual Auth and Storage API calls.
+- The API runner reached local Auth, and synthetic `example.invalid` accounts appeared in local `auth.users`, but signup requests timed out. `create_story()` then returned an upstream timeout. The runner stopped before object upload; no Storage/RLS scenario is marked passed.
+- Local PostgreSQL remained healthy on direct container read-only checks. Local Kong/PostgREST requests timed out. A local API gateway restart and local start attempts did not restore Storage; CLI repeatedly reported `storage-api` unhealthy because `127.0.0.1:5000` refused connections, and removed partial containers while preserving volumes. No SQL test ran after this failure.
+- Code review: the Tell route verifies the session server-side, loads the story and media row under owner RLS, and signs only the object key loaded from that database row. The signed URL lifetime is 3600 seconds. Runtime owner/anonymous/expiry/public-object denial was not proven.
+- Static limit comparison: client max, `supabase/config.toml`, bucket limit, and registration guard all resolve to 500 MiB / 524,288,000 bytes. TUS uses 6 MiB chunks and the bucket cap remains in force; an oversized TUS request was not executed.
+- Playwright ran in installed Microsoft Edge: anonymous `/workspace` redirect passed; sign-up/story/Tell failed with `Failed to fetch` because local API services were unavailable. The flow did not reach story creation or video selection. The first Chromium attempt could not launch because the managed browser binary was absent.
+
+### Application checks
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed, 6 files / 16 tests.
+- `npm run build` — passed.
+- `npm run e2e` — 1 passed, 1 failed in Edge; no Auth/Tell creation or upload-ready pass.
+- `git diff --check` — passed after documentation edits (Git emitted only expected LF/CRLF working-copy warnings).
+
+### Files changed and remaining risks
+
+Changed the private-source migration syntax, SQL/API integration harness, Playwright config and Auth/Tell test, npm e2e script, and `docs/auth-private-storage.md` plus this log. The API harness has not passed end-to-end. RLS/Storage authorization, signed-URL expiry, public URL denial, 500 MiB TUS rejection, and valid-file browser selection remain runtime-unverified. The public bucket flag and server-side signing flow were reviewed in code only. No commit was created; human review pending.
+
+## Resumed local Auth + private Tell validation — 2026-11-10
+
+### Local target and migrations
+
+Read `AGENTS.md` and `docs/auth-private-storage.md` first. User-confirmed local services remained healthy, so they were not restarted. A read-only local history query confirmed foundation `20261109090000` and private-source `20261110090000` are both recorded. Every synthetic Auth, story, Storage, and API test used only `127.0.0.1:54321` and `127.0.0.1:54322`.
+
+### Executed integration results
+
+- The API/Auth/Storage harness passed 18/18: A authenticated and created two stories; B read zero A stories; invalid `text/plain` Storage upload was rejected (415); A uploaded/registered media and could read it; B and anonymous could not read it (404); B could not upload to A's path (403) or register under A's story (SQLSTATE `22023`); forged insert and owner change were blocked (SQLSTATE `42501`); a formatted public URL returned HTTP 400; A's temporary signed URL returned HTTP 200 with a 3600-second JWT lifetime; B/anonymous could not sign A's object (404); TUS above 500 MiB was rejected (413).
+- The SQL verifier passed 7/7: two A stories and A object metadata visible to A; A story/object metadata invisible to B; object metadata invisible to anon; `private-source` has `public=false`; source audit provenance exists.
+- Playwright in installed Microsoft Edge passed 2/2: anonymous redirect and full synthetic Auth/Tell flow, including A/B signup/sign-in, workspace, two stories, Tell routes, cross-owner story isolation, invalid file type rejection, and generated WebM reaching upload-ready state. The browser-generated WebM was not uploaded; actual Storage upload/registration was exercised by the API harness.
+
+### Corrections during validation
+
+Kept the earlier proven migration syntax fix. Replaced unsupported direct `storage.objects` DML with Storage API writes, qualified the SQL verifier's ambiguous `object_key` column, removed an authenticated-client `getBucket()` check that requires admin rights, and tested privacy by public retrieval plus SQL `public=false`. The API harness now checks the signed token's exact 3600-second lifetime, MIME rejection, and TUS 413. Playwright uses Edge via `PLAYWRIGHT_CHANNEL`, waits for route transitions, scopes the uploader alert selector, and base64-transfers the generated WebM between browser and Node.
+
+Next dev emitted a non-fatal Cache Components diagnostic mentioning `Date.now()` during route prerendering; the Tell route rendered and both Playwright tests passed. This diagnostic is recorded as a remaining development warning. No hosted operation, commit, language detection, or transcription was performed.
+
+### Application validation
+
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed, 6 files / 16 tests.
+- `npm run e2e` — passed, 2 tests / 0 failures in Microsoft Edge against LOCAL Supabase.
+- `npm run build` — passed.
+- `git diff --check` — passed after this log update; Git emitted only LF/CRLF working-copy warnings.
+
+## Auth/Tell Playwright startup diagnosis — 2026-11-10
+
+### Diagnosis and startup change
+
+- The previously reported Next `ECONNRESET` / `Error: aborted` was absent during the initial targeted repeats (1/1, then 3/3). During this later commit-validation E2E run, Next logged `Error: aborted` with `code: ECONNRESET` while the Auth/Tell test was running; the browser test still passed. The reset is reproducible as a server log event, but its triggering request remains unidentified and it has not reproduced as a failed assertion.
+- During a production `next start` experiment, Auth `/signup` and `/token` returned HTTP 504 after about 10 seconds (`context deadline exceeded`). Similar intermittent Auth timeouts also occurred during a later dev-server run, so the evidence does not attribute them to production mode. PostgreSQL logged cancellation of the corresponding client request, with no lock wait in the read-only activity check. The Auth health probe still returned 200. Restarted only the LOCAL Auth container; subsequent attempts included both successful requests and an intermittent timeout, so the restart does not establish a root cause. No database, migration, Storage, or hosted service was changed.
+- Playwright now starts a fresh Next dev server on the configured local origin `127.0.0.1:3000`, with `reuseExistingServer: false` and a 120-second startup timeout. Port 3000 matches the local Auth `site_url` and allow-list. The server logs confirmed startup, and Playwright shut it down after each run. This removes the previous possibility of silently reusing a stale Next process. Production-server startup was reverted after its Auth timeouts; the evidence does not show that production mode caused them.
+- The Auth/Tell assertions were not weakened. No application, Auth/Storage client, test assertion, or migration code changed.
+
+### Executed results
+
+- Targeted Auth/Tell test: 3/3 sequential passes with the final local-origin configuration.
+- Full E2E suite: 2/2 passes, then 2/2 passes, then 2/2 passes during the full validation sequence; all runs used synthetic users and LOCAL Supabase.
+- `npm run lint` — passed.
+- `npm run typecheck` — passed.
+- `npm test` — passed, 6 files / 16 tests.
+- `npm run build` — passed.
+- `git diff --check` — passed after this entry was added.
+
+Next dev continues to emit a non-fatal Cache Components diagnostic for `Date.now()` in the Tell route during prerendering. It did not fail the final test. The local Auth endpoint separately showed intermittent HTTP 504 request timeouts during investigation, then succeeded for the final repeated tests. Source duration and checksum are still client-reported and require later server/media verification. No hosted project operation or commit occurred.
