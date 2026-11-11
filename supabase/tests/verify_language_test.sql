@@ -1,5 +1,5 @@
--- Synthetic rollback-only local RLS/integration verifier for Verify A.
--- Requires the committed foundation/Storage migrations plus Verify A migrations.
+-- Synthetic rollback-only local workflow verifier for Verify through Translate.
+-- Requires the local foundation/Storage, Verify A/B, Craft and Translate migrations.
 -- Run only against the disposable local database at 127.0.0.1:54322.
 DO $verify_test$
 DECLARE
@@ -17,9 +17,14 @@ DECLARE
   transcript_id uuid;
   edited_transcript_id uuid;
   cut_id uuid;
+  next_cut_id uuid;
   v_transcript_segment_id uuid;
   approval_result record;
   cut_approval_result record;
+  translation_id uuid;
+  edited_translation_id uuid;
+  translation_segment_id uuid;
+  translation_approval_result record;
   proposal1 uuid;
   proposal2 uuid;
   result_row record;
@@ -249,6 +254,47 @@ BEGIN
   SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type='STORY_CUT_APPROVED' AND artifact_version_id=cut_id;
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Story Cut approval audit event is missing.'; END IF;
   result:=result||jsonb_build_array(jsonb_build_object('test','Story Cut uses exact approved transcript segment timestamps and owner approval binds sealed hash','passed',true));
+  translation_id:=public.persist_english_translation(s3,a,src3,transcript_id,cut_id,
+    jsonb_build_array(jsonb_build_object('cutSegmentId',(SELECT id FROM public.story_cut_segments WHERE story_id=s3 AND cut_artifact_id=cut_id),'englishText','AI English proposal')),
+    decode(repeat('de',32),'hex'),'ai_proposal',NULL,'mock-translation-model');
+  SELECT id INTO translation_segment_id FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=translation_id AND segment_number=1;
+  SELECT count(*) INTO rows_visible FROM public.translation_segments ts JOIN public.story_cut_segments cs ON cs.story_id=ts.story_id AND cs.id=ts.cut_segment_id
+   WHERE ts.story_id=s3 AND ts.translation_artifact_id=translation_id AND ts.cut_segment_id=cs.id AND ts.transcript_segment_id=cs.transcript_segment_id
+     AND ts.cue_start_ms=cs.output_start_ms AND ts.cue_end_ms=cs.output_end_ms AND cs.source_start_ms=0 AND cs.source_end_ms=1200
+     AND ts.initial_proposal='AI English proposal' AND ts.english_text='AI English proposal';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'English translation lost exact cut/transcript/source timestamp lineage or AI-original text.'; END IF;
+  SELECT * INTO translation_approval_result FROM public.approve_english_translation(s3,a,translation_id);
+  IF translation_approval_result.translation_artifact_id<>translation_id OR translation_approval_result.approved_content_sha256<>encode(decode(repeat('de',32),'hex'),'hex') OR translation_approval_result.approved_at IS NULL THEN RAISE EXCEPTION 'English translation approval did not bind the sealed hash.'; END IF;
+  BEGIN PERFORM * FROM public.approve_english_translation(s3,b,translation_id); RAISE EXCEPTION 'Cross-owner translation approval was unexpectedly allowed.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  BEGIN PERFORM public.persist_english_translation(s3,b,src3,transcript_id,cut_id,
+    jsonb_build_array(jsonb_build_object('cutSegmentId',(SELECT id FROM public.story_cut_segments WHERE story_id=s3 AND cut_artifact_id=cut_id),'englishText','Forged')),
+    decode(repeat('de',32),'hex'),'ai_proposal',NULL,'mock-translation-model');
+    RAISE EXCEPTION 'Cross-owner English translation creation was unexpectedly allowed.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  edited_translation_id:=public.persist_english_translation(s3,a,src3,transcript_id,cut_id,
+    jsonb_build_array(jsonb_build_object('translationSegmentId',translation_segment_id,'englishText','Storyteller English correction')),
+    decode(repeat('ef',32),'hex'),'storyteller_edit',translation_id,NULL);
+  SELECT count(*) INTO rows_visible FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=edited_translation_id
+    AND initial_proposal='AI English proposal' AND english_text='Storyteller English correction';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'English edit overwrote AI-original proposal or failed to create a new version.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=translation_id AND english_text='AI English proposal';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'English edit mutated the historical translation version.'; END IF;
+  PERFORM * FROM public.approve_english_translation(s3,a,edited_translation_id);
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type='TRANSLATION_EDITED' AND artifact_version_id=edited_translation_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'English translation edit was not audited.'; END IF;
+  IF has_function_privilege('anon','public.persist_english_translation(uuid,uuid,uuid,uuid,uuid,jsonb,bytea,text,uuid,text)','EXECUTE')
+    OR has_function_privilege('authenticated','public.approve_english_translation(uuid,uuid,uuid)','EXECUTE') THEN RAISE EXCEPTION 'Anonymous or direct authenticated translation workflow permission exists.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type='TRANSLATION_APPROVED'
+    AND artifact_version_id IN (translation_id,edited_translation_id);
+  IF rows_visible<>2 THEN RAISE EXCEPTION 'AI translation approval and later storyteller approval audit events are missing.'; END IF;
+  next_cut_id:=public.persist_story_cut(s3,a,src3,transcript_id,jsonb_build_array(jsonb_build_object(
+    'transcriptSegmentId',v_transcript_segment_id,'sourceStartMs',0,'sourceEndMs',1200,
+    'narrativeRole','Opening','selectionRationale','Synthetic revised cut')),
+    decode(repeat('bc',32),'hex'),cut_id);
+  BEGIN PERFORM * FROM public.approve_english_translation(s3,a,edited_translation_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code<>'42501' THEN RAISE EXCEPTION 'Story Cut replacement did not invalidate translation applicability.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.translation_approvals WHERE story_id=s3 AND translation_artifact_id=edited_translation_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Historical English translation approval was lost after Story Cut replacement.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','Yoruba-to-English proposal, exact lineage, separate versioned edits, exact-hash owner approval and cut-change invalidation','passed',true));
   BEGIN
     PERFORM * FROM public.approve_yoruba_transcript(s3,b,transcript_id);
     RAISE EXCEPTION 'Cross-owner transcript approval was unexpectedly allowed.';
@@ -278,6 +324,8 @@ BEGIN
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Replacing the source deleted historical transcript approval.'; END IF;
   BEGIN PERFORM * FROM public.approve_yoruba_transcript(s3,a,edited_transcript_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
   IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate transcript approval applicability.'; END IF;
+  BEGIN PERFORM * FROM public.approve_english_translation(s3,a,edited_translation_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate English translation applicability.'; END IF;
   BEGIN PERFORM * FROM public.approve_story_cut(s3,a,cut_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
   IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate Story Cut approval applicability.'; END IF;
   SELECT count(*) INTO rows_visible FROM public.story_cut_approvals WHERE story_id=s3 AND cut_artifact_id=cut_id AND approved_by=a;

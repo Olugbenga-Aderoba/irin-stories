@@ -53,7 +53,7 @@ export function StoryCutReview(props: { storyId: string; sourceUrl: string; tran
             <button className="button button--quiet" type="button" disabled={busy || !hasChanges} onClick={() => void post(`/api/stories/${props.storyId}/story-cuts`, { intent: "save_order", orderedSegmentIds: items.map((item) => item.transcript_segment_id) }, "Your changes are saved as a new Story Cut version.")}>Save changes as new version</button>
             {!props.cut.approved && <button className="button button--primary" type="button" disabled={busy || hasChanges} onClick={() => void post(`/api/stories/${props.storyId}/story-cuts/${props.cut?.artifactId}/approve`, { intent: "approve_story_cut" }, "Story Cut approved for this exact version.")}>Approve Story Cut</button>}
           </>}
-          {props.cut?.approved && <p role="status">Approved by storyteller for this exact Story Cut version and hash.</p>}
+          {props.cut?.approved && <><p role="status">Approved by storyteller for this exact Story Cut version and hash.</p><a className="button button--primary" href={`/story/${props.storyId}/translate`}>Continue to Translate</a></>}
           </>}
           {!props.cut && <button className="button button--primary" type="button" disabled={busy || !props.transcriptSegments.length} onClick={() => void post(`/api/stories/${props.storyId}/story-cuts`, { intent: "create_proposal" }, "Story Cut proposal created.")}>{busy ? "Creating…" : "Create Story Cut proposal"}</button>}
           {props.cut && !props.cut.approved && <p>Target duration: 90–150 seconds (guidance, not a requirement).</p>}

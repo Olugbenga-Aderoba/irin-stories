@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/site-header";
 import { VerifyLanguagePanel } from "@/components/verify-language-panel";
 import { VerifyTranscriptReview, type TranscriptReview } from "@/components/verify-transcript-review";
 import { StoryCutReview, type StoryCutItem } from "@/components/story-cut-review";
+import { TranslationReview, type TranslationReviewSegment } from "@/components/translation-review";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -12,7 +13,7 @@ export const instant = false;
 
 export default async function StoryStagePage({ params }: { params: Promise<{ storyId: string; stage: string }> }) {
   const { storyId, stage } = await params;
-  if (stage !== "tell" && stage !== "verify" && stage !== "craft") redirect(`/story/${storyId}/tell`);
+  if (stage !== "tell" && stage !== "verify" && stage !== "craft" && stage !== "translate") redirect(`/story/${storyId}/tell`);
   if (!/^[0-9a-f-]{36}$/i.test(storyId)) notFound();
 
   // Run Supabase's session expiry clock reads at request time.
@@ -74,6 +75,61 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
       <header className="real-story-heading"><p className="eyebrow">CRAFT · STORY CUT</p><h1>{story.title}</h1><p>Shape moments from your approved Yoruba Source. Your edits are saved as new versions.</p></header>
       {!media || !playbackUrl ? <section className="tell-panel"><p>A current private source video is required.</p><a className="button button--primary" href={`/story/${story.id}/verify`}>Return to Verify</a></section>
         : <StoryCutReview key={cut?.artifactId ?? "new-cut"} storyId={story.id} sourceUrl={playbackUrl} transcriptApproved={transcriptApproved} transcriptSegments={transcriptSegments} cut={cut} />}
+    </main></div>;
+  }
+
+  if (stage === "translate") {
+    let cutApproved = false;
+    let translation: null | { artifactId: string; approved: boolean; segments: TranslationReviewSegment[] } = null;
+    const { data: media } = await supabase.from("media_assets").select("artifact_version_id").eq("story_id", story.id).eq("role", "SOURCE").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (media) {
+      const { data: transcript } = await supabase.from("transcript_versions").select("artifact_version_id,source_media_artifact_id,language_code").eq("story_id", story.id).eq("source_media_artifact_id", media.artifact_version_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (transcript?.language_code === "yor") {
+        const { data: cut } = await supabase.from("story_cut_versions").select("artifact_version_id")
+          .eq("story_id", story.id).eq("source_media_artifact_id", media.artifact_version_id).eq("transcript_artifact_id", transcript.artifact_version_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (cut) {
+          const [{ data: transcriptApproval }, { data: transcriptArtifact }, { data: cutApproval }, { data: cutArtifact }, { data: cutRows }] = await Promise.all([
+            supabase.from("transcript_approvals").select("approved_content_sha256").eq("story_id", story.id).eq("transcript_artifact_id", transcript.artifact_version_id).maybeSingle(),
+            supabase.from("artifact_versions").select("content_sha256,sealed_at").eq("story_id", story.id).eq("id", transcript.artifact_version_id).maybeSingle(),
+            supabase.from("story_cut_approvals").select("approved_content_sha256").eq("story_id", story.id).eq("cut_artifact_id", cut.artifact_version_id).maybeSingle(),
+            supabase.from("artifact_versions").select("content_sha256,sealed_at").eq("story_id", story.id).eq("id", cut.artifact_version_id).maybeSingle(),
+            supabase.from("story_cut_segments").select("id,transcript_segment_id,source_start_ms,source_end_ms,output_start_ms,output_end_ms,segment_number")
+              .eq("story_id", story.id).eq("cut_artifact_id", cut.artifact_version_id).order("segment_number", { ascending: true }),
+          ]);
+          const cleanHash = (value: unknown) => typeof value === "string" ? value.replace(/^\\x/i, "").toLowerCase() : "";
+          cutApproved = Boolean(transcriptArtifact?.sealed_at && cleanHash(transcriptApproval?.approved_content_sha256) === cleanHash(transcriptArtifact.content_sha256)
+            && cutArtifact?.sealed_at && cleanHash(cutApproval?.approved_content_sha256) === cleanHash(cutArtifact.content_sha256));
+          if (cutApproved && cutRows?.length) {
+            const transcriptIds = cutRows.map((row) => row.transcript_segment_id).filter((id): id is string => Boolean(id));
+            const [{ data: translationRow }, { data: transcriptSegments }] = await Promise.all([
+              supabase.from("translation_versions").select("artifact_version_id,source_language_code,target_language_code")
+                .eq("story_id", story.id).eq("source_media_artifact_id", media.artifact_version_id).eq("transcript_artifact_id", transcript.artifact_version_id).eq("story_cut_artifact_id", cut.artifact_version_id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+              supabase.from("transcript_segments").select("id,text_yoruba").eq("story_id", story.id).eq("transcript_artifact_id", transcript.artifact_version_id).in("id", transcriptIds),
+            ]);
+            if (translationRow?.source_language_code === "yor" && translationRow.target_language_code === "eng") {
+              const [{ data: approval }, { data: artifact }, { data: translatedRows }] = await Promise.all([
+                supabase.from("translation_approvals").select("approved_content_sha256").eq("story_id", story.id).eq("translation_artifact_id", translationRow.artifact_version_id).maybeSingle(),
+                supabase.from("artifact_versions").select("content_sha256,sealed_at").eq("story_id", story.id).eq("id", translationRow.artifact_version_id).maybeSingle(),
+                supabase.from("translation_segments").select("id,cut_segment_id,transcript_segment_id,cue_start_ms,cue_end_ms,english_text,initial_proposal,segment_number")
+                  .eq("story_id", story.id).eq("translation_artifact_id", translationRow.artifact_version_id).order("segment_number", { ascending: true }),
+              ]);
+              const cutById = new Map(cutRows.map((row) => [row.id, row]));
+              const transcriptText = new Map((transcriptSegments ?? []).map((row) => [row.id, row.text_yoruba]));
+              translation = { artifactId: translationRow.artifact_version_id,
+                approved: Boolean(artifact?.sealed_at && cleanHash(approval?.approved_content_sha256) && cleanHash(approval?.approved_content_sha256) === cleanHash(artifact.content_sha256)),
+                segments: (translatedRows ?? []).flatMap((row) => {
+                  const cutSegment = cutById.get(row.cut_segment_id);
+                  const yoruba = transcriptText.get(row.transcript_segment_id);
+                  return cutSegment && yoruba ? [{ ...row, source_start_ms: cutSegment.source_start_ms, source_end_ms: cutSegment.source_end_ms, yoruba_text: yoruba }] : [];
+                }) };
+            }
+          }
+        }
+      }
+    }
+    return <div className="workspace-page"><SiteHeader variant="workspace" /><main className="real-story-workspace mx-auto w-full max-w-7xl px-5 sm:px-8">
+      <header className="real-story-heading"><p className="eyebrow">TRANSLATE · YORUBA TO ENGLISH</p><h1>{story.title}</h1><p>Review an AI-assisted English translation of the exact approved Story Cut. Your Yoruba Source and Story Cut remain unchanged.</p></header>
+      <TranslationReview key={translation?.artifactId ?? "new-translation"} storyId={story.id} cutApproved={cutApproved} translation={translation} />
     </main></div>;
   }
 
