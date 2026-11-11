@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { SourceVideoUploader } from "@/components/source-video-uploader";
 import { SiteHeader } from "@/components/site-header";
 import { VerifyLanguagePanel } from "@/components/verify-language-panel";
+import { VerifyTranscriptReview, type TranscriptReview } from "@/components/verify-transcript-review";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -42,6 +43,7 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
     let humanDecision = null;
     let noReliableDetection = false;
     let playbackUrl = "";
+    let transcript: TranscriptReview | null = null;
     if (media) {
       const [{ data: latestVerification }, { data: review }, { data: eligible }, { data: signed }, { data: decision }] = await Promise.all([
         supabase.from("source_media_verifications")
@@ -70,6 +72,29 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
       const { data: diagnostic } = await admin.from("verify_language_detection_diagnostics").select("category,attempted_at").eq("story_id", story.id).order("attempted_at", { ascending: false }).limit(1).maybeSingle();
       noReliableDetection = diagnostic?.category === "no_reliable_language";
       playbackUrl = signed?.signedUrl ?? "";
+      const { data: latestTranscript } = await supabase.from("transcript_versions")
+        .select("artifact_version_id,source_media_artifact_id,language_code")
+        .eq("story_id", story.id).eq("source_media_artifact_id", media.artifact_version_id)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (latestTranscript) {
+        const [{ data: segments }, { data: approval }, { data: artifact }] = await Promise.all([
+          supabase.from("transcript_segments").select("id,segment_number,source_start_ms,source_end_ms,initial_proposal,text_yoruba")
+            .eq("story_id", story.id).eq("transcript_artifact_id", latestTranscript.artifact_version_id).order("segment_number", { ascending: true }),
+          supabase.from("transcript_approvals").select("approved_content_sha256")
+            .eq("story_id", story.id).eq("transcript_artifact_id", latestTranscript.artifact_version_id).maybeSingle(),
+          supabase.from("artifact_versions").select("content_sha256,sealed_at")
+            .eq("story_id", story.id).eq("id", latestTranscript.artifact_version_id).maybeSingle(),
+        ]);
+        const artifactHash = typeof artifact?.content_sha256 === "string" ? artifact.content_sha256.replace(/^\\x/i, "").toLowerCase() : "";
+        const approvedHash = typeof approval?.approved_content_sha256 === "string" ? approval.approved_content_sha256.replace(/^\\x/i, "").toLowerCase() : "";
+        if (segments && artifact?.sealed_at) transcript = {
+          artifact_version_id: latestTranscript.artifact_version_id,
+          source_media_artifact_id: latestTranscript.source_media_artifact_id,
+          language_code: latestTranscript.language_code,
+          approved: Boolean(approvedHash && artifactHash && approvedHash === artifactHash),
+          segments,
+        };
+      }
     }
 
     return (
@@ -94,6 +119,7 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
                 transcriptionEligible={transcriptionEligible}
                 humanDecision={humanDecision}
                 noReliableDetection={noReliableDetection}
+                transcriptPanel={<VerifyTranscriptReview key={transcript?.artifact_version_id ?? media.artifact_version_id} storyId={story.id} sourceMediaArtifactId={media.artifact_version_id} transcriptionEligible={transcriptionEligible} transcript={transcript} />}
               />}
         </main>
       </div>

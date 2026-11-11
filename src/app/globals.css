@@ -1427,6 +1427,12 @@ a:focus-visible {
   margin-top: 1rem;
 }
 
+.transcript-segment { display: grid; gap: .4rem; margin: 1rem 0; }
+.transcript-segment label { color: var(--color-muted, #6b655c); font-variant-numeric: tabular-nums; }
+.transcript-segment textarea { min-height: 5rem; width: 100%; border: 1px solid var(--color-border, #d8d0c6); border-radius: .6rem; padding: .8rem; background: #fffdf9; color: inherit; font: inherit; line-height: 1.6; }
+.transcript-original { margin: 1rem 0; border-top: 1px solid var(--color-border, #d8d0c6); padding-top: .8rem; }
+.transcript-original summary { cursor: pointer; font-weight: 600; }
+
 .language-correction-form label {
   color: var(--ink-soft);
   font-size: .9rem;

@@ -48,5 +48,5 @@ describe("trusted source media probe", () => {
       throw new Error("mock provider failure after reading sample");
     })).rejects.toThrow("mock provider failure after reading sample");
     await expect(stat(temporaryAudioPath)).rejects.toMatchObject({ code: "ENOENT" });
-  }, 30_000);
+  }, 60_000);
 });

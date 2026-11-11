@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { ReactNode } from "react";
 
 type Verification = {
   id: string;
@@ -38,6 +39,7 @@ type Props = {
   transcriptionEligible: boolean;
   humanDecision: { id: string; state: "selected" | "confirmed" | "superseded" | "invalidated"; selected_language_code: string; selected_language_name: string; decision_origin: string } | null;
   noReliableDetection: boolean;
+  transcriptPanel?: ReactNode;
 };
 
 async function postJson(url: string, body?: unknown) {
@@ -205,6 +207,7 @@ export function VerifyLanguagePanel(props: Props) {
         </form>}
         {props.transcriptionEligible && <p role="status">This exact source has a supported, storyteller-confirmed original language and is eligible for a future stage.</p>}
       </section>}
+      {props.transcriptPanel}
       {error && <p className="form-error" role="alert">{error}</p>}
       {success && <p className="upload-status" role="status">{success}</p>}
     </div>

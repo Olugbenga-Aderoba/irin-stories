@@ -100,6 +100,16 @@ export async function extractAudioForLanguageDetection(videoPath: string, audioP
   }
 }
 
+export async function extractAudioForTranscription(videoPath: string, audioPath: string) {
+  await runFfmpeg([
+    "-nostdin", "-hide_banner", "-v", "error", "-i", videoPath,
+    "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", "-compression_level", "5", "-f", "flac", audioPath,
+  ], 15 * 60_000);
+  const info = await stat(audioPath);
+  if (info.size <= 42) throw new MediaProbeError("No usable audio samples were found. Please choose another video.");
+  if (info.size > 25 * 1024 * 1024) throw new MediaProbeError("The prepared audio exceeds the provider file-size limit.");
+}
+
 export async function validateSpeechActivity(audioPath: string) {
   const bytes = await readFile(audioPath);
   if (bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WAVE") {

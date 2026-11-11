@@ -14,6 +14,9 @@ DECLARE
   src3 constant uuid := '30000000-0000-4000-8000-000000000303';
   src3_replacement constant uuid := '30000000-0000-4000-8000-000000000304';
   fallback_decision uuid;
+  transcript_id uuid;
+  edited_transcript_id uuid;
+  approval_result record;
   proposal1 uuid;
   proposal2 uuid;
   result_row record;
@@ -212,6 +215,39 @@ BEGIN
   IF rows_visible<>1 OR NOT public.is_transcription_eligible(s3) THEN RAISE EXCEPTION 'Explicit confirmation did not enable eligibility.'; END IF;
   SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type IN ('STORYTELLER_LANGUAGE_SELECTED','STORYTELLER_LANGUAGE_CONFIRMED');
   IF rows_visible<>2 THEN RAISE EXCEPTION 'Separate selection and confirmation audit events are missing.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  BEGIN
+    transcript_id:=public.persist_yoruba_transcript(s3,b,src3,'[{"startSeconds":0,"endSeconds":1.2,"text":"AI original Yoruba"}]'::jsonb,expected_hash,'ai_transcription',NULL);
+    RAISE EXCEPTION 'Cross-owner transcript persistence was unexpectedly allowed.';
+  EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  transcript_id:=public.persist_yoruba_transcript(s3,a,src3,'[{"startSeconds":0,"endSeconds":1.2,"text":"AI original Yoruba"}]'::jsonb,expected_hash,'ai_transcription',NULL);
+  SELECT * INTO result_row FROM public.transcript_versions WHERE story_id=s3 AND artifact_version_id=transcript_id;
+  IF result_row.language_decision_id<>fallback_decision OR result_row.language_review_id IS NOT NULL THEN RAISE EXCEPTION 'Fallback transcript provenance was not linked to the storyteller decision.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',b::text,true); PERFORM set_config('role','authenticated',true);
+  SELECT count(*) INTO rows_visible FROM public.transcript_versions WHERE story_id=s3;
+  IF rows_visible<>0 OR has_function_privilege('authenticated','public.persist_yoruba_transcript(uuid,uuid,uuid,jsonb,bytea,text,uuid)','EXECUTE') THEN RAISE EXCEPTION 'Storyteller B could access or forge transcript edits.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  SELECT count(*) INTO rows_visible FROM public.transcript_segments WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND initial_proposal='AI original Yoruba' AND text_yoruba='AI original Yoruba' AND source_start_ms=0 AND source_end_ms=1200;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Timestamped AI-original transcript segment was not stored.'; END IF;
+  SELECT * INTO approval_result FROM public.approve_yoruba_transcript(s3,a,transcript_id);
+  IF approval_result.transcript_artifact_id<>transcript_id OR approval_result.approved_content_sha256<>encode(expected_hash,'hex') OR approval_result.approved_at IS NULL THEN RAISE EXCEPTION 'Transcript approval did not bind the sealed version hash.'; END IF;
+  BEGIN
+    PERFORM * FROM public.approve_yoruba_transcript(s3,b,transcript_id);
+    RAISE EXCEPTION 'Cross-owner transcript approval was unexpectedly allowed.';
+  EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  edited_transcript_id:=public.persist_yoruba_transcript(s3,a,src3,'[{"segmentNumber":1,"text":"Storyteller correction"}]'::jsonb,decode(repeat('ef',32),'hex'),'storyteller_edit',transcript_id);
+  SELECT count(*) INTO rows_visible FROM public.transcript_segments WHERE story_id=s3 AND transcript_artifact_id=edited_transcript_id AND initial_proposal='AI original Yoruba' AND text_yoruba='Storyteller correction';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Storyteller edit overwrote or lost the AI-original transcript.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.transcript_segments WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND initial_proposal='AI original Yoruba' AND text_yoruba='AI original Yoruba';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Editing modified the approved historical transcript.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.transcript_approvals WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND approved_content_sha256=expected_hash AND approved_by=a;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Exact historical approval was not retained.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type IN ('TRANSCRIPT_EDITED','TRANSCRIPT_APPROVED');
+  IF rows_visible<>2 THEN RAISE EXCEPTION 'Transcript edit and approval audit events are missing.'; END IF;
+  IF has_function_privilege('anon','public.persist_yoruba_transcript(uuid,uuid,uuid,jsonb,bytea,text,uuid)','EXECUTE')
+    OR has_function_privilege('anon','public.approve_yoruba_transcript(uuid,uuid,uuid)','EXECUTE') THEN RAISE EXCEPTION 'Anonymous transcript persistence or approval permission exists.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','fallback transcript versioning preserves AI original, edit history and exact-hash owner approval','passed',true));
+  PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',a::text,true); PERFORM set_config('role','authenticated',true);
   PERFORM set_config('request.jwt.claim.role','postgres',true); PERFORM set_config('role','postgres',true);
   INSERT INTO public.artifact_versions(id,story_id,kind,version_number,created_by) VALUES(src3_replacement,s3,'SOURCE_MEDIA',2,a);
   INSERT INTO public.media_assets(story_id,artifact_version_id,role,bucket_id,object_key,content_sha256,mime_type,byte_size,duration_ms,original_filename)
@@ -219,6 +255,12 @@ BEGIN
   UPDATE public.artifact_versions SET content_sha256=expected_hash,sealed_at=clock_timestamp() WHERE id=src3_replacement;
   PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',a::text,true); PERFORM set_config('role','authenticated',true);
   IF public.is_transcription_eligible(s3) THEN RAISE EXCEPTION 'Source replacement preserved eligibility.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  SELECT count(*) INTO rows_visible FROM public.transcript_approvals WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND approved_by=a;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Replacing the source deleted historical transcript approval.'; END IF;
+  BEGIN PERFORM * FROM public.approve_yoruba_transcript(s3,a,edited_transcript_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate transcript approval applicability.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',a::text,true); PERFORM set_config('role','authenticated',true);
   SELECT count(*) INTO rows_visible FROM public.source_language_reviews WHERE story_id=s3 AND detected_language_code='yor';
   IF rows_visible<>0 THEN RAISE EXCEPTION 'Fallback created a fake AI proposal.'; END IF;
   result:=result||jsonb_build_array(jsonb_build_object('test','no-reliable failure creates no AI proposal','passed',rows_visible=0));
