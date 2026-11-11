@@ -6,6 +6,7 @@ import { VerifyLanguagePanel } from "@/components/verify-language-panel";
 import { VerifyTranscriptReview, type TranscriptReview } from "@/components/verify-transcript-review";
 import { StoryCutReview, type StoryCutItem } from "@/components/story-cut-review";
 import { TranslationReview, type TranslationReviewSegment } from "@/components/translation-review";
+import { ProtectReview } from "@/components/protect-review";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -13,7 +14,7 @@ export const instant = false;
 
 export default async function StoryStagePage({ params }: { params: Promise<{ storyId: string; stage: string }> }) {
   const { storyId, stage } = await params;
-  if (stage !== "tell" && stage !== "verify" && stage !== "craft" && stage !== "translate") redirect(`/story/${storyId}/tell`);
+  if (stage !== "tell" && stage !== "verify" && stage !== "craft" && stage !== "translate" && stage !== "protect") redirect(`/story/${storyId}/tell`);
   if (!/^[0-9a-f-]{36}$/i.test(storyId)) notFound();
 
   // Run Supabase's session expiry clock reads at request time.
@@ -131,6 +132,41 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
       <header className="real-story-heading"><p className="eyebrow">TRANSLATE · YORUBA TO ENGLISH</p><h1>{story.title}</h1><p>Review an AI-assisted English translation of the exact approved Story Cut. Your Yoruba Source and Story Cut remain unchanged.</p></header>
       <TranslationReview key={translation?.artifactId ?? "new-translation"} storyId={story.id} cutApproved={cutApproved} translation={translation} />
     </main></div>;
+  }
+
+  if (stage === "protect") {
+    const [{ data: translation }, { data: review }] = await Promise.all([
+      supabase.from("translation_versions").select("artifact_version_id,source_media_artifact_id,transcript_artifact_id,story_cut_artifact_id").eq("story_id", story.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("privacy_review_versions").select("artifact_version_id,translation_artifact_id").eq("story_id", story.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    let findings: Parameters<typeof ProtectReview>[0]["findings"] = [];
+    if (review) {
+      const [{ data: rows }, { data: segments }] = await Promise.all([
+        supabase.from("privacy_findings").select("id,privacy_review_artifact_id,risk_category,proposal_summary,suggested_safer_alternative,translation_segment_id,translation_artifact_id").eq("story_id", story.id).eq("privacy_review_artifact_id", review.artifact_version_id),
+        supabase.from("translation_segments").select("id,english_text").eq("story_id", story.id).eq("translation_artifact_id", review.translation_artifact_id),
+      ]);
+      const ids = (rows ?? []).map((row) => row.id);
+      const { data: decisions } = ids.length
+        ? await supabase.from("privacy_decisions").select("privacy_finding_id,decision").eq("story_id", story.id).in("privacy_finding_id", ids)
+        : { data: [] as { privacy_finding_id: string; decision: string }[] };
+      const text = new Map((segments ?? []).map((item) => [item.id, item.english_text])); const decisionByFinding = new Map((decisions ?? []).map((item) => [item.privacy_finding_id, item.decision]));
+      findings = (rows ?? []).map((row) => ({ id: row.id, review_id: review.artifact_version_id, risk_category: row.risk_category, proposal_summary: row.proposal_summary, suggested_safer_alternative: row.suggested_safer_alternative, translation_segment_id: row.translation_segment_id ?? "", translation_artifact_id: row.translation_artifact_id ?? "", decision: decisionByFinding.get(row.id) ?? null, passage: row.proposal_summary || (row.translation_segment_id ? text.get(row.translation_segment_id) ?? "" : "") }));
+    }
+    const [{ data: covenant }, { data: eligible }] = await Promise.all([
+      supabase.from("artifact_versions").select("id,content_sha256,sealed_at").eq("story_id", story.id).eq("kind", "COVENANT").order("version_number", { ascending: false }).limit(1).maybeSingle(),
+      createSupabaseAdminClient().rpc("protection_publication_eligible", { p_story: story.id }),
+    ]);
+    let permissions: Parameters<typeof ProtectReview>[0]["permissions"] = []; let covenantApproved = false;
+    if (covenant) {
+      const [{ data: rows }, { data: approval }] = await Promise.all([
+        supabase.from("covenant_permissions").select("permission,allowed").eq("story_id", story.id).eq("covenant_artifact_id", covenant.id),
+        supabase.from("covenant_approvals").select("approved_content_sha256").eq("story_id", story.id).eq("covenant_artifact_id", covenant.id).maybeSingle(),
+      ]);
+      permissions = rows ?? [];
+      const cleanHash = (value: unknown) => typeof value === "string" ? value.replace(/^\\x/i, "").toLowerCase() : "";
+      covenantApproved = Boolean(covenant.sealed_at && approval && cleanHash(approval.approved_content_sha256) === cleanHash(covenant.content_sha256));
+    }
+    return <div className="workspace-page"><SiteHeader variant="workspace" /><main className="real-story-workspace mx-auto w-full max-w-7xl px-5 sm:px-8"><header className="real-story-heading"><p className="eyebrow">PROTECT · PRIVACY AND PERMISSIONS</p><h1>{story.title}</h1><p>Review potential privacy concerns in your approved English translation. AI proposes; you decide.</p></header><ProtectReview storyId={story.id} translationId={translation?.artifact_version_id ?? null} findings={findings} permissions={permissions} covenantId={covenant?.id ?? null} covenantApproved={covenantApproved} eligible={Boolean(eligible)} /></main></div>;
   }
 
   if (stage === "verify") {

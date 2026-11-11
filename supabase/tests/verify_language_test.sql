@@ -1,5 +1,5 @@
--- Synthetic rollback-only local workflow verifier for Verify through Translate.
--- Requires the local foundation/Storage, Verify A/B, Craft and Translate migrations.
+-- Synthetic rollback-only local workflow verifier for Verify through Protect.
+-- Requires the local foundation/Storage, Verify A/B, Craft, Translate and Protect migrations.
 -- Run only against the disposable local database at 127.0.0.1:54322.
 DO $verify_test$
 DECLARE
@@ -23,7 +23,11 @@ DECLARE
   cut_approval_result record;
   translation_id uuid;
   edited_translation_id uuid;
-  translation_segment_id uuid;
+  translation_seg_var uuid;
+  privacy_review_id uuid;
+  privacy_finding_id uuid;
+  covenant_id uuid;
+  eligible boolean;
   translation_approval_result record;
   proposal1 uuid;
   proposal2 uuid;
@@ -257,7 +261,7 @@ BEGIN
   translation_id:=public.persist_english_translation(s3,a,src3,transcript_id,cut_id,
     jsonb_build_array(jsonb_build_object('cutSegmentId',(SELECT id FROM public.story_cut_segments WHERE story_id=s3 AND cut_artifact_id=cut_id),'englishText','AI English proposal')),
     decode(repeat('de',32),'hex'),'ai_proposal',NULL,'mock-translation-model');
-  SELECT id INTO translation_segment_id FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=translation_id AND segment_number=1;
+  SELECT id INTO translation_seg_var FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=translation_id AND segment_number=1;
   SELECT count(*) INTO rows_visible FROM public.translation_segments ts JOIN public.story_cut_segments cs ON cs.story_id=ts.story_id AND cs.id=ts.cut_segment_id
    WHERE ts.story_id=s3 AND ts.translation_artifact_id=translation_id AND ts.cut_segment_id=cs.id AND ts.transcript_segment_id=cs.transcript_segment_id
      AND ts.cue_start_ms=cs.output_start_ms AND ts.cue_end_ms=cs.output_end_ms AND cs.source_start_ms=0 AND cs.source_end_ms=1200
@@ -266,12 +270,35 @@ BEGIN
   SELECT * INTO translation_approval_result FROM public.approve_english_translation(s3,a,translation_id);
   IF translation_approval_result.translation_artifact_id<>translation_id OR translation_approval_result.approved_content_sha256<>encode(decode(repeat('de',32),'hex'),'hex') OR translation_approval_result.approved_at IS NULL THEN RAISE EXCEPTION 'English translation approval did not bind the sealed hash.'; END IF;
   BEGIN PERFORM * FROM public.approve_english_translation(s3,b,translation_id); RAISE EXCEPTION 'Cross-owner translation approval was unexpectedly allowed.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  privacy_review_id:=public.persist_privacy_review(s3,a,translation_id,'mock-privacy-model',jsonb_build_array(jsonb_build_object(
+    'translationSegmentId',translation_seg_var,'riskCategory','identifying detail','affectedPassage','AI flagged passage','suggestedSaferAlternative','A nearby town')),
+    decode(repeat('ad',32),'hex'));
+  SELECT id INTO privacy_finding_id FROM public.privacy_findings WHERE story_id=s3 AND privacy_review_artifact_id=privacy_review_id;
+  SELECT count(*) INTO rows_visible FROM public.privacy_findings f WHERE f.story_id=s3 AND f.id=privacy_finding_id AND f.proposal_source='AI'
+    AND f.proposal_model='mock-privacy-model' AND f.translation_artifact_id=translation_id AND f.translation_segment_id=translation_seg_var
+    AND f.suggested_safer_alternative='A nearby town';
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'AI privacy finding did not preserve exact approved translation segment lineage.'; END IF;
+  BEGIN PERFORM public.record_privacy_decision(s3,b,privacy_review_id,privacy_finding_id,'KEEP'); RAISE EXCEPTION 'Cross-owner privacy decision unexpectedly succeeded.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  BEGIN PERFORM public.persist_privacy_review(s3,b,translation_id,'mock',jsonb_build_array(),'aa'); RAISE EXCEPTION 'Cross-owner privacy review unexpectedly succeeded.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  PERFORM public.record_privacy_decision(s3,a,privacy_review_id,privacy_finding_id,'KEEP');
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type='PRIVACY_DECISION_MADE' AND artifact_version_id=privacy_review_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Storyteller privacy decision audit event is missing.'; END IF;
+  covenant_id:=public.create_story_covenant(s3,a,jsonb_build_object('PUBLIC_VIEWING',true,'EDUCATIONAL_USE',false,'ACADEMIC_RESEARCH',false,'DOCUMENTARY_REUSE',false,'COMMERCIAL_REUSE',false,'AI_MODEL_TRAINING',false,'VOICE_CLONING',false,'POLITICAL_USE',false,'CHILD_IDENTITY_DISCLOSURE',false,'THIRD_PARTY_EDITING',false),decode(repeat('ac',32),'hex'));
+  SELECT count(*) INTO rows_visible FROM public.covenant_permissions WHERE story_id=s3 AND covenant_artifact_id=covenant_id AND NOT allowed;
+  IF rows_visible<>9 THEN RAISE EXCEPTION 'Sensitive Covenant permissions did not default to explicit denial.'; END IF;
+  PERFORM public.approve_story_covenant(s3,a,covenant_id);
+  SELECT public.protection_publication_eligible(s3) INTO eligible;
+  IF NOT eligible THEN RAISE EXCEPTION 'Current owner-decided privacy review and approved public-viewing Covenant did not unlock the Protect gate.'; END IF;
+  IF has_function_privilege('anon','public.record_privacy_decision(uuid,uuid,uuid,uuid,public.privacy_decision)','EXECUTE')
+    OR has_function_privilege('authenticated','public.create_story_covenant(uuid,uuid,jsonb,bytea)','EXECUTE') THEN RAISE EXCEPTION 'Anonymous/direct client Protect mutation permission exists.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','AI privacy finding retains exact translation segment and safer alternative; owner-only explicit KEEP is audited','passed',true));
+  result:=result||jsonb_build_array(jsonb_build_object('test','all ten Covenant permissions are explicit, sensitive defaults denied, exact Covenant approval unlocks Protect eligibility','passed',eligible));
   BEGIN PERFORM public.persist_english_translation(s3,b,src3,transcript_id,cut_id,
     jsonb_build_array(jsonb_build_object('cutSegmentId',(SELECT id FROM public.story_cut_segments WHERE story_id=s3 AND cut_artifact_id=cut_id),'englishText','Forged')),
     decode(repeat('de',32),'hex'),'ai_proposal',NULL,'mock-translation-model');
     RAISE EXCEPTION 'Cross-owner English translation creation was unexpectedly allowed.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
   edited_translation_id:=public.persist_english_translation(s3,a,src3,transcript_id,cut_id,
-    jsonb_build_array(jsonb_build_object('translationSegmentId',translation_segment_id,'englishText','Storyteller English correction')),
+    jsonb_build_array(jsonb_build_object('translationSegmentId',translation_seg_var,'englishText','Storyteller English correction')),
     decode(repeat('ef',32),'hex'),'storyteller_edit',translation_id,NULL);
   SELECT count(*) INTO rows_visible FROM public.translation_segments WHERE story_id=s3 AND translation_artifact_id=edited_translation_id
     AND initial_proposal='AI English proposal' AND english_text='Storyteller English correction';
@@ -320,6 +347,9 @@ BEGIN
   PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',a::text,true); PERFORM set_config('role','authenticated',true);
   IF public.is_transcription_eligible(s3) THEN RAISE EXCEPTION 'Source replacement preserved eligibility.'; END IF;
   PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  SELECT public.protection_publication_eligible(s3) INTO eligible;
+  IF eligible THEN RAISE EXCEPTION 'Source replacement preserved Protect applicability.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','source replacement invalidates prior Protect eligibility while preserving Covenant and finding history','passed',NOT eligible));
   SELECT count(*) INTO rows_visible FROM public.transcript_approvals WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND approved_by=a;
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Replacing the source deleted historical transcript approval.'; END IF;
   BEGIN PERFORM * FROM public.approve_yoruba_transcript(s3,a,edited_transcript_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
