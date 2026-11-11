@@ -7,6 +7,7 @@ import { VerifyTranscriptReview, type TranscriptReview } from "@/components/veri
 import { StoryCutReview, type StoryCutItem } from "@/components/story-cut-review";
 import { TranslationReview, type TranslationReviewSegment } from "@/components/translation-review";
 import { ProtectReview } from "@/components/protect-review";
+import { PublicationReview } from "@/components/publication-review";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -14,7 +15,7 @@ export const instant = false;
 
 export default async function StoryStagePage({ params }: { params: Promise<{ storyId: string; stage: string }> }) {
   const { storyId, stage } = await params;
-  if (stage !== "tell" && stage !== "verify" && stage !== "craft" && stage !== "translate" && stage !== "protect") redirect(`/story/${storyId}/tell`);
+  if (stage !== "tell" && stage !== "verify" && stage !== "craft" && stage !== "translate" && stage !== "protect" && stage !== "publish") redirect(`/story/${storyId}/tell`);
   if (!/^[0-9a-f-]{36}$/i.test(storyId)) notFound();
 
   // Run Supabase's session expiry clock reads at request time.
@@ -167,6 +168,25 @@ export default async function StoryStagePage({ params }: { params: Promise<{ sto
       covenantApproved = Boolean(covenant.sealed_at && approval && cleanHash(approval.approved_content_sha256) === cleanHash(covenant.content_sha256));
     }
     return <div className="workspace-page"><SiteHeader variant="workspace" /><main className="real-story-workspace mx-auto w-full max-w-7xl px-5 sm:px-8"><header className="real-story-heading"><p className="eyebrow">PROTECT · PRIVACY AND PERMISSIONS</p><h1>{story.title}</h1><p>Review potential privacy concerns in your approved English translation. AI proposes; you decide.</p></header><ProtectReview storyId={story.id} translationId={translation?.artifact_version_id ?? null} findings={findings} permissions={permissions} covenantId={covenant?.id ?? null} covenantApproved={covenantApproved} eligible={Boolean(eligible)} /></main></div>;
+  }
+
+  if (stage === "publish") {
+    const admin = createSupabaseAdminClient();
+    const [{ data: snapshot }, { data: eligible }] = await Promise.all([
+      supabase.from("publication_snapshots").select("id,public_id,manifest_sha256,snapshot_version").eq("story_id", story.id).order("snapshot_version", { ascending: false }).limit(1).maybeSingle(),
+      admin.rpc("publication_is_eligible", { p_story: story.id }),
+    ]);
+    let publicationState: "DRAFT" | "PUBLISHED" | "STALE" | "WITHDRAWN" | null = null; let approved = false;
+    if (snapshot) {
+      const [{ data: access }, { data: approval }] = await Promise.all([
+        supabase.from("publication_access").select("access_state").eq("story_id", story.id).eq("publication_snapshot_id", snapshot.id).maybeSingle(),
+        supabase.from("approvals").select("decision,approved_content_sha256").eq("story_id", story.id).eq("publication_snapshot_id", snapshot.id).eq("decision", "APPROVE").maybeSingle(),
+      ]);
+      publicationState = access?.access_state ?? null;
+      const cleanHash = (value: unknown) => typeof value === "string" ? value.replace(/^\\x/i, "").toLowerCase() : "";
+      approved = Boolean(approval && cleanHash(approval.approved_content_sha256) === cleanHash(snapshot.manifest_sha256));
+    }
+    return <div className="workspace-page"><SiteHeader variant="workspace" /><main className="real-story-workspace mx-auto w-full max-w-4xl px-5 sm:px-8"><header className="real-story-heading"><p className="eyebrow">PUBLISH · APPROVAL AND ACCESS</p><h1>{story.title}</h1><p>Review the exact approved source, Story Cut, English translation, privacy decisions and Covenant before sharing.</p></header><PublicationReview storyId={story.id} eligible={Boolean(eligible)} snapshotId={snapshot?.id ?? null} publicId={snapshot?.public_id ?? null} state={publicationState} approved={approved} /></main></div>;
   }
 
   if (stage === "verify") {

@@ -28,6 +28,10 @@ DECLARE
   privacy_finding_id uuid;
   covenant_id uuid;
   eligible boolean;
+  publication_id uuid;
+  publication_public_id uuid;
+  publication_result record;
+  publication_json jsonb;
   translation_approval_result record;
   proposal1 uuid;
   proposal2 uuid;
@@ -293,6 +297,56 @@ BEGIN
     OR has_function_privilege('authenticated','public.create_story_covenant(uuid,uuid,jsonb,bytea)','EXECUTE') THEN RAISE EXCEPTION 'Anonymous/direct client Protect mutation permission exists.'; END IF;
   result:=result||jsonb_build_array(jsonb_build_object('test','AI privacy finding retains exact translation segment and safer alternative; owner-only explicit KEEP is audited','passed',true));
   result:=result||jsonb_build_array(jsonb_build_object('test','all ten Covenant permissions are explicit, sensitive defaults denied, exact Covenant approval unlocks Protect eligibility','passed',eligible));
+  SELECT public.publication_is_eligible(s3) INTO eligible;
+  IF NOT eligible THEN RAISE EXCEPTION 'Complete approved Verify, Craft, Translate and Protect inputs did not unlock publication preparation.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  SELECT * INTO publication_result FROM public.create_publication_snapshot(s3,a);
+  publication_id:=publication_result.snapshot_id; publication_public_id:=publication_result.public_id;
+  SELECT count(*) INTO rows_visible FROM public.publication_snapshots p JOIN public.publication_snapshot_hashes h ON h.story_id=p.story_id AND h.publication_snapshot_id=p.id
+   WHERE p.story_id=s3 AND p.id=publication_id AND p.source_media_artifact_id=src3 AND p.transcript_artifact_id=transcript_id AND p.story_cut_artifact_id=cut_id
+    AND p.translation_artifact_id=translation_id AND p.privacy_review_artifact_id=privacy_review_id AND p.covenant_artifact_id=covenant_id
+    AND p.cultural_review_artifact_id IS NULL AND p.rendered_media_artifact_id IS NULL AND octet_length(p.manifest_sha256)=32;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Publication snapshot failed to seal exact version and component hash lineage.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','anon',true); PERFORM set_config('role','anon',true);
+  SELECT count(*) INTO rows_visible FROM public.get_published_story(publication_public_id);
+  IF rows_visible<>0 THEN RAISE EXCEPTION 'Draft snapshot was publicly visible before final storyteller approval and Publish.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  BEGIN PERFORM public.approve_publication_snapshot(s3,b,publication_id); RAISE EXCEPTION 'Cross-owner final approval unexpectedly succeeded.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  BEGIN PERFORM public.publish_story_snapshot(s3,a,publication_id); RAISE EXCEPTION 'Publish without final approval unexpectedly succeeded.'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code NOT IN ('P0001','42501') THEN RAISE EXCEPTION 'Publish without explicit final approval was not blocked.'; END IF;
+  PERFORM public.approve_publication_snapshot(s3,a,publication_id);
+  PERFORM set_config('request.jwt.claim.role','anon',true); PERFORM set_config('role','anon',true);
+  SELECT count(*) INTO rows_visible FROM public.get_published_story(publication_public_id);
+  IF rows_visible<>0 THEN RAISE EXCEPTION 'Final approval silently published the story.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  PERFORM set_config('request.jwt.claim.sub','',true); PERFORM set_config('request.jwt.claims','{}',true);
+  PERFORM public.publish_story_snapshot(s3,a,publication_id);
+  PERFORM set_config('request.jwt.claim.role','anon',true); PERFORM set_config('role','anon',true);
+  SELECT to_jsonb(g) INTO publication_json FROM public.get_published_story(publication_public_id) g;
+  IF publication_json IS NULL OR (SELECT count(*) FROM jsonb_object_keys(publication_json))<>7
+    OR publication_json ? 'owner_id' OR publication_json ? 'source_media_artifact_id' OR publication_json ? 'object_key' OR publication_json ? 'privacy_findings' THEN RAISE EXCEPTION 'Public RPC did not expose only its approved seven-field allowlist.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true); PERFORM set_config('request.jwt.claim.sub','',true); PERFORM set_config('request.jwt.claims','{}',true);
+  BEGIN UPDATE public.publication_snapshots SET title='tampered' WHERE id=publication_id; RAISE EXCEPTION 'Published snapshot mutation unexpectedly succeeded.'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code NOT IN ('P0001','42501') THEN RAISE EXCEPTION 'Immutable publication snapshot could be modified.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',b::text,true); PERFORM set_config('role','authenticated',true);
+  SELECT count(*) INTO rows_visible FROM public.publication_snapshots WHERE story_id=s3;
+  IF rows_visible<>0 THEN RAISE EXCEPTION 'Storyteller B read Storyteller A publication snapshot.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  PERFORM set_config('request.jwt.claim.sub','',true); PERFORM set_config('request.jwt.claims','{}',true);
+  BEGIN PERFORM public.withdraw_story_publication(s3,b,publication_id); RAISE EXCEPTION 'Cross-owner withdrawal unexpectedly succeeded.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  PERFORM public.withdraw_story_publication(s3,a,publication_id);
+  PERFORM set_config('request.jwt.claim.role','anon',true); PERFORM set_config('role','anon',true);
+  SELECT count(*) INTO rows_visible FROM public.get_published_story(publication_public_id);
+  IF rows_visible<>0 THEN RAISE EXCEPTION 'Withdrawn publication remained publicly available.'; END IF;
+  PERFORM set_config('request.jwt.claim.role','service_role',true); PERFORM set_config('role','service_role',true);
+  SELECT count(*) INTO rows_visible FROM public.publication_snapshots p JOIN public.publication_snapshot_hashes h ON h.story_id=p.story_id AND h.publication_snapshot_id=p.id JOIN public.approvals ap ON ap.story_id=p.story_id AND ap.publication_snapshot_id=p.id WHERE p.story_id=s3 AND p.id=publication_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Withdrawal deleted the snapshot, component hashes, or final approval.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND publication_snapshot_id=publication_id AND event_type IN ('PUBLICATION_APPROVED','PUBLICATION_PUBLISHED','PUBLICATION_WITHDRAWN');
+  IF rows_visible<>3 THEN RAISE EXCEPTION 'Publication approval, publish, and withdrawal audit history is incomplete.'; END IF;
+  IF has_function_privilege('anon','public.create_publication_snapshot(uuid,uuid)','EXECUTE')
+    OR has_function_privilege('authenticated','public.publish_story_snapshot(uuid,uuid,uuid)','EXECUTE')
+    OR has_function_privilege('anon','public.withdraw_story_publication(uuid,uuid,uuid)','EXECUTE') THEN RAISE EXCEPTION 'Anonymous or direct client publication mutation permission exists.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','final approval and Publish are separate; public RPC allowlist is narrow; owner withdrawal stops serving and retains snapshot/hash/approval','passed',true));
   BEGIN PERFORM public.persist_english_translation(s3,b,src3,transcript_id,cut_id,
     jsonb_build_array(jsonb_build_object('cutSegmentId',(SELECT id FROM public.story_cut_segments WHERE story_id=s3 AND cut_artifact_id=cut_id),'englishText','Forged')),
     decode(repeat('de',32),'hex'),'ai_proposal',NULL,'mock-translation-model');
@@ -350,6 +404,10 @@ BEGIN
   SELECT public.protection_publication_eligible(s3) INTO eligible;
   IF eligible THEN RAISE EXCEPTION 'Source replacement preserved Protect applicability.'; END IF;
   result:=result||jsonb_build_array(jsonb_build_object('test','source replacement invalidates prior Protect eligibility while preserving Covenant and finding history','passed',NOT eligible));
+  SELECT public.publication_is_eligible(s3) INTO eligible;
+  IF eligible THEN RAISE EXCEPTION 'Source replacement preserved publication eligibility.'; END IF;
+  SELECT count(DISTINCT p.id) INTO rows_visible FROM public.publication_snapshots p JOIN public.approvals ap ON ap.story_id=p.story_id AND ap.publication_snapshot_id=p.id JOIN public.covenant_permissions cp ON cp.story_id=p.story_id AND cp.covenant_artifact_id=p.covenant_artifact_id WHERE p.story_id=s3 AND p.id=publication_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Source replacement removed historical publication approval or Covenant decision.'; END IF;
   SELECT count(*) INTO rows_visible FROM public.transcript_approvals WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND approved_by=a;
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Replacing the source deleted historical transcript approval.'; END IF;
   BEGIN PERFORM * FROM public.approve_yoruba_transcript(s3,a,edited_transcript_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
