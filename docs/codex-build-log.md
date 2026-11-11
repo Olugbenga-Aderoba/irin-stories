@@ -586,3 +586,119 @@ Next dev continues to emit a non-fatal Cache Components diagnostic for `Date.now
 ### Remaining risks and limits
 
 The local Auth timeout prevents this deployment run's E2E suite from passing; the migration itself and remote read-only checks succeeded. Hosted Auth redirect configuration and application runtime variables remain to be configured separately. The bucket cap is 500 MiB, but the hosted project's global Storage upload limit must also permit that size before 500 MiB uploads can work. Source duration and checksum are still client-reported and require later server/media verification. The Next dev Cache Components `Date.now()` diagnostic remains known from local development. No Verify workflow was started, no secret was recorded, and no commit was created for this deployment report.
+
+## OpenAI language identification for Verify A — 2026-11-10
+
+### Provider and audio flow
+
+- Implemented `OpenAILanguageDetectionProvider` behind the existing replaceable `LanguageDetectionProvider` interface. It uses the official OpenAI Node SDK with `gpt-transcribe` and JSON response format; it consumes only the detected language code list and safe request ID, discards the response transcript, and never writes or displays transcript text. OpenAI does not return a usable language confidence in this response, so normalized `confidence` is `null`. OpenAI `yo` is normalized to ISO 639-3 `yor` with an ISO language catalog.
+- The normalized strict Zod proposal includes provider/model, language code/name, null confidence, detection time, source artifact ID, verified source SHA-256, and nullable request ID. Only this proposal metadata is persisted. Provider failures record an allowlisted category, not raw response/error content.
+- With explicit storyteller consent, the server revalidates session, owner, current source artifact, READY verification, and server source hash; it extracts a maximum 90-second mono 16 kHz WAV excerpt from the private video, enforces OpenAI's 25 MiB limit, and deletes temporary audio/video on completion or failure. A speech-activity heuristic rejects silence/steady tones before provider calls; this is not a definitive speech detector. Empty or ambiguous detected-language output is retryable and creates no proposal.
+- Local credential location: ignored project-root `.env.local`, as `OPENAI_API_KEY=...`; also keep the server-only `SUPABASE_SERVICE_ROLE_KEY` there for trusted database RPCs. Do not paste either value into chat or commit the file. The key-presence check found no `OPENAI_API_KEY` in process environment or `.env.local`; no live OpenAI request was made.
+
+### Migrations and executed tests
+
+- New migration `20261112090000_language_provider_provenance.sql` adds a nullable safe provider request ID and a failure-audit event/function. It replaces the service-role-only proposal RPC signature to persist the request ID. The existing Verify A migration was preserved. Both Verify migrations are applied to LOCAL PostgreSQL at `127.0.0.1:54322`; neither was applied remotely.
+- The first local apply of migration 120 exposed a SQL quote defect at `owner's` (SQLSTATE `42601`). The migration transaction rolled back completely; a read-only catalog check confirmed no partial column, enum, or function change. Escaping the apostrophe fixed it; the local reapply succeeded.
+- The rollback-only SQL harness emitted 19 passing assertions: provider failure category audit, request ID persistence without transcript, actual blocked `TRANSCRIBING` update (SQLSTATE `P0001`: `Transcribing requires server-verified media and explicit current Yoruba confirmation by the story owner.`), proposal-only ineligibility, ownership/anonymous/cross-story blocks, owner confirmation, unsupported correction, source replacement invalidation, and retained provenance. Synthetic fixtures rolled back.
+- Mocked provider tests passed: Yoruba normalization; confidence remains null; malformed, empty, and ambiguous outputs reject; absent key returns retryable `provider_not_configured`; provider timeout is retryable; and empty/oversized samples are rejected before the provider boundary. Media tests reject a steady synthetic tone and confirm the temporary sample is removed on provider failure. No synthetic speech is represented as Yoruba.
+- `npm run lint` — passed; `npm run typecheck` — passed; `npm test` — passed, 8 files / 24 tests; `npm run build` — passed.
+- `npm run e2e` against LOCAL Supabase — 1 passed / 2 failed. Anonymous workspace redirect passed. Existing Auth/Tell failed to reach workspace, and Verify's synthetic account creation returned HTTP 504. Auth logs show local duplicate-identity lookup timeouts; failures occurred before story/media creation. The local Auth service was not restarted. No live OpenAI request occurred.
+- `git diff --check` — passed after the final documentation edits.
+
+### Remaining risks
+
+The credential is absent and the user has not asked for a live OpenAI call, so real language accuracy, provider request ID behavior, and human confirmation in browser remain unverified. Local Auth 504s block authenticated E2E coverage. The VAD-like check is heuristic and needs real speech evaluation; the selected native FFmpeg build is old and requires replacement before production. OpenAI may internally produce transcript content, which this implementation discards; the sample is still sent externally only after explicit storyteller consent. No hosted database/Auth/Storage change or commit was made.
+
+## Verify A: server media verification and language decision — 2026-11-10
+
+### Scope and implementation
+
+- Added migration `20261111090000_verify_source_language.sql` and `supabase/tests/verify_language_test.sql`. The migration was applied only to the disposable local database at `127.0.0.1:54322`; hosted project `irin-stories-dev` was not modified.
+- Added an authenticated Verify stage, owner-authorized server-side private media retrieval, FFprobe metadata and server SHA-256, bounded FFmpeg audio decode/sample extraction, stored metadata discrepancies, append-only source-version verification and language decision records, owner-bound confirmation, and a database `TRANSCRIBING` guard. No transcription was implemented or invoked.
+- The strict Zod language-result contract and provider interface are in place. Provider selection/credentials were not supplied (user said they would name another provider); therefore the UI and API explicitly report language detection unavailable, send no audio, and do not fabricate a language or confidence. The trusted local SQL fixture proposal is only a database behavior test, not a real detector result.
+- Removed the incompatible `ffmpeg-static` package. Externalized the native FFmpeg/FFprobe packages from Next bundling and removed explicit `runtime` route settings incompatible with this repository's Cache Components configuration; Route Handlers use the Node default. The media test's bounded timeout is 20 seconds because native probing exceeded Vitest's 5-second default during concurrent checks.
+
+### Actual local test results
+
+- Local SQL/RLS integration harness: 16 assertions passed; the transaction rolled back its synthetic fixture data. It verified proposal-only ineligibility, valid owner confirmation, unsupported correction recorded but not eligible, other-user and anonymous blocks, cross-story blocks, client-write block, verified-current-source preconditions, source-replacement invalidation, and historical row retention.
+- Media probe unit test: generated harmless synthetic color/tone WebM (not speech) was probed, decoded, and reduced to a bounded audio sample.
+- Unit suite: `npm test` passed, 8 files / 22 tests.
+- `npm run lint` passed; `npm run typecheck` passed.
+- `npm run build` initially failed because explicit `runtime = "nodejs"` is incompatible with `cacheComponents` and Turbopack could not bundle the FFmpeg installer. After removing those route settings and externalizing the native packages, the production build passed.
+- Full `npm run e2e` against LOCAL Supabase: 1 passed / 2 failed. Anonymous workspace redirect passed. Auth/Tell failed at local sign-in after signup recovery; Verify failed when the local Auth admin API returned HTTP 504 creating a synthetic account. Local Auth logs show database identity lookups timing out (`context deadline exceeded`); PostgreSQL was reachable with zero lock waits. Both failed attempts occurred before story/media creation. A read-only check found zero `source_media_verifications` and `source_language_reviews` rows. No service restart was performed.
+- `git diff --check` passed after the final documentation edits (only Git's normal LF/CRLF working-copy notices were emitted).
+
+### Limitations and risks
+
+Real language detection, actual proposal UI review, confirmation/correction through browser, and end-to-end media verification remain unvalidated because provider choice is pending and local Auth returned 504. The current local probe test uses a tone, not Yoruba speech; audio decoding does not establish speech presence or intelligibility. Only an initial audio excerpt is prepared for future detection. The selected Windows FFmpeg installer binary is an old build and must be replaced with a maintained, verified native build before production use. Deployment disk/runtime limits for a 500 MiB temporary download remain unverified. No hosted changes or commit were made.
+
+## Tell prerender clock and upload status
+
+- The development log identified a synchronous clock read on the story stage route. The authenticated render path reaches Supabase Auth's `__loadSession()` expiry check, which compares `expires_at` with `Date.now()`. The route now awaits Next.js `connection()` before creating the client, following the installed Cache Components migration guide. The expiry calculation and clock source are unchanged.
+- Tell uses the registered source state to show that the private video is ready and point the storyteller to Verify. The empty state keeps its existing wording.
+- Lint, typecheck, the production build, and all 24 unit tests passed. The first test run encountered a full system drive. Clearing the generated production cache allowed the rerun to pass. An authenticated browser replay was not run.
+
+## Home prerender clock
+
+- Home's `AuthAwareHome` now awaits `connection()` before loading the Supabase session. The existing `Suspense` fallback remains the prerendered shell. Supabase Auth's `__loadSession()` still uses `Date.now()` to check session expiry at request time.
+- Lint, typecheck, all 24 unit tests, and the production build passed. The media probe test timed out during the concurrent checks and passed on an isolated rerun.
+- Anonymous requests to `/` and `/sign-in` on the running local development server returned HTTP 200 with no new current-time diagnostic. A separate synthetic session run could not start alongside the existing server, so signed-in development replay remains unverified.
+
+## Verify A failure diagnostics
+
+- The previous live 503 retained only `provider_error`. The detection route now logs the first failing stage and allowlisted metadata under a correlation ID. The browser gets the corresponding safe message, retryability, stage, category, and support reference. The existing database audit keeps its coarse categories.
+- Provider HTTP errors, SDK timeouts and network failures, malformed responses, inconclusive results, and proposal write failures have distinct categories. SDK logging is disabled. Temporary video and audio directories are removed before any proposal write. A cleanup error cannot replace an earlier processing failure.
+- Mocked route tests exercise these mappings, error redaction, temporary file removal, and the confirmation gate. An initial test run exposed a mock call history shared across cases. Clearing that history fixed the assertion. All 46 tests passed on rerun. The live request was not retried.
+
+## Verify A diagnostic persistence by support reference — 2026-11-11
+
+- Task: persist sanitized Verify A failure details and make them retrievable using the support reference, without changing detection logic or making a provider request.
+- Added service-role-only `verify_language_detection_diagnostics` storage and an owner-authenticated lookup endpoint. Failure responses remain fixed safe browser fields; no secret, transcript, media, path, URL, or raw response data is stored.
+- Updated mocked route coverage for the durable diagnostic insert and redaction; documented the persistence and lookup method in `docs/verify-language.md`.
+- Files changed: migration, diagnostic route and tests, Verify A docs, this build log.
+- Tests: added sanitized persistence assertions and support-reference lookup coverage, alongside provider status/category, transport classification, response validation, proposal persistence failure, proposal absence on failures, false transcription eligibility, cleanup, and secret/transcript redaction checks.
+- Commands: `npm run lint` passed; `npm run typecheck` passed; `npm test` passed (9 files / 47 tests before the final lookup assertion, followed by a focused rerun); `npm run build` passed; `git diff --check` passed. No live OpenAI request or commit.
+- Known limitation: the new migration must be applied to the local database before the runtime persistence is available; hosted database was not changed.
+
+## Local diagnostics migration validation — 2026-11-11
+
+- Applied only 20261113090000_verify_language_diagnostics.sql and its history entry atomically through supabase_db_irin-stories, confirmed mapped to local port 54322 and healthy. History count is exactly one.
+- Verified table existence, RLS, fourteen approved columns, and denied SELECT/INSERT privileges for anon/authenticated. Service-role insertion and retrieval passed using synthetic rollback-only rows.
+- Forbidden-data enforcement FAILED: unrestricted category text accepted a synthetic transcript sentinel. The test rolled back. No real secret or private content was used. The schema was not changed to conceal this finding.
+- Added anonymous, cross-owner and unknown-reference 404 handler tests. These and the existing owner lookup test mock database/session boundaries; they do not establish live authenticated HTTP behavior.
+- No Supabase restart, remote migration, live OpenAI request, or commit. Human review of the missing database content constraints remains pending.
+## Local diagnostic hardening — 2026-11-11
+
+Task: harden only local Verify diagnostic persistence. Files changed: follow-up migration; diagnostic helpers and POST write path; route test assertions; new sanitizer tests, database-backed lookup tests and SQL rejection matrix; verify-language.md, data-model.md and this log. Human review is pending.
+
+Validation: lint, typecheck, production build and git diff --check passed; npm test passed 60 tests with four opt-in database cases skipped, and the four opt-in cases passed separately. Initial database lookup exceeded Vitest's five-second timeout during Docker startup and passed with a 30-second test budget. Initial replay bootstrap failed on copied platform ownership, then missing platform primary keys; copying schema without ownership and restoring required platform keys resolved both before successful replay. No product invariant was changed.
+
+Follow-up migration 20261114090000_harden_verify_language_diagnostics.sql preserves applied history. Both diagnostic migrations are local-only. The fourteen columns are: correlation_id UUID primary key; story_id nullable UUID foreign key; attempted_at non-null timestamptz; stage/category non-null allowlisted text; retryable non-null boolean; provider/model nullable allowlisted text; provider_http_status nullable smallint (100–599); provider_error_type/code nullable exact allowlisted text (maximum 64); provider_request_id nullable req_ plus 32 hexadecimal digits; transport nullable timeout/network; database_code nullable five uppercase alphanumeric SQLSTATE characters. Null story IDs are allowed only at ownership_check. Diagnostics cascade on story deletion, replacing SET NULL to prevent invalid orphans.
+
+Strict Zod validation precedes inserts. Unknown provider types/codes become null; PGRST codes become null because they are not SQLSTATEs. Browser failure fields are unchanged. No generic payload, JSON, message, transcript, audio, path or URL column exists.
+
+The local SQL matrix rejected 92 forbidden insertions: paragraphs, key-like sentinels, bearer text, URLs, Windows/Unix paths, signed URLs, oversized identifiers and JSON across all nine text fields, invalid HTTP statuses/SQLSTATEs, and missing resolved story IDs. Service insertion/read and RLS/grants passed. Tests roll back. The existing Verify SQL harness reported 19 passing assertions and deliberately raised its results exception for rollback.
+
+Four real-database GET handler cases passed: owner 200; cross-owner, anonymous and unknown reference 404. Session identity and database-client adapters are injected; full browser-cookie/HTTP authentication is not claimed. Run diagnostics-local.test.ts with VERIFY_DIAGNOSTICS_DB_TEST=1 and --testTimeout=30000 --hookTimeout=30000. Fixtures are removed.
+
+All six application migrations replayed in an isolated local database over empty auth/storage platform definitions with required primary keys. The rejection matrix passed there; the scratch database was removed. No reset of the existing local database was needed.
+
+Limits: constraints cannot prevent covert encoding into valid UUIDs, hexadecimal request IDs or SQLSTATE-shaped identifiers, or a privileged administrator changing constraints. Database outages can still prevent durable writes. No hosted changes, live OpenAI requests or commits occurred.
+
+## HTTP 200 language cardinality diagnostics — 2026-11-11
+
+Task: review gpt-transcribe response normalization and distinguish zero/one/multiple detected languages without a model, migration or transcription change. Official API documentation and installed SDK agree with the existing languages object-array parser; no structural mismatch found.
+
+Changed language.ts (safe cardinality error metadata), detect-language route (safe log labels only), detection-route.test.ts, new language-sdk-response.test.ts, verify-language.md and this log. The new SDK tests mock global fetch; route tests mock the provider. No private payload is retained or inspected. Confidence remains null. Persisted diagnostic/browser contracts and the single-language requirement remain unchanged.
+
+Limitation: labels are log-only because no schema change is permitted. Historical empty versus multiple results remain unknown. Human review pending. No live request, migration, model change or commit.
+
+Validation: npm run lint, npm run typecheck, npm test (67 passed; four opt-in local-database tests skipped), npm run build and git diff --check passed. No test failures encountered in this task.
+## Human-authoritative language fallback — 2026-11-11
+
+Task: add separate owner-authorized language selection and confirmation after `no_reliable_language`, retaining failed detection provenance and preventing selection-only transcription eligibility.
+
+Completed the fallback with a pending selection row and a separate confirmation RPC. Selection has null confirmation fields; the confirmation trigger derives the owner and server timestamp, and eligibility checks current-source READY verification plus confirmed Yoruba. The source invalidation trigger runs when a SOURCE_MEDIA artifact is sealed, after it becomes the current version. Diagnostics remain intact and a source-linked unreliable-detection audit event records the correlation ID. No fake AI proposal is created.
+
+The disposable LOCAL database was clean-reset and replayed after the migration changes. Local history shows migrations 20261109090000 through 20261115090000 once each. The rollback-only Verify SQL harness reported all assertions passed, including fallback owner selection, pending fields, eligibility, owner/anonymous rejection, source replacement, audit history and no fake proposal. Focused fallback UI tests passed 3/3. Lint, typecheck, all application tests (70 passed, 4 skipped), build and diff check passed. The focused Playwright attempt was blocked because the configured Chromium executable is not installed; no browser binaries were installed. No hosted target was accessed; no commit or transcription work occurred.

@@ -1412,6 +1412,36 @@ a:focus-visible {
   font-size: 0.67rem;
 }
 
+.verify-private-video {
+  display: block;
+  width: 100%;
+  max-height: 28rem;
+  margin: .8rem 0;
+  border-radius: .8rem;
+  background: #15231e;
+}
+
+.language-correction-form {
+  display: grid;
+  gap: .55rem;
+  margin-top: 1rem;
+}
+
+.language-correction-form label {
+  color: var(--ink-soft);
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+.language-correction-form input:not([type="checkbox"]) {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: .6rem;
+  background: white;
+  padding: .8rem .9rem;
+  color: var(--ink);
+}
+
 .stage-lead {
   margin: 1rem 0 1.1rem;
   color: var(--ink-soft);

@@ -169,7 +169,9 @@ export function SourceVideoUploader({ storyId, existing }: Props) {
         {file && <button className="button button--primary" disabled={busy || !durationMs} onClick={upload} type="button">{busy ? "Uploading…" : "Upload privately"}</button>}
       </>}
       {progress !== null && <div className="upload-progress" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>}
-      <p aria-live="polite" className="upload-status">{status}</p>
+      <p aria-live="polite" className="upload-status">{existing
+        ? "Your private source video is ready. Continue to Verify to check the media and detect its original language."
+        : status}</p>
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
   );
