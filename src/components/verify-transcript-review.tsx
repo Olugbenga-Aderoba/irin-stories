@@ -81,7 +81,7 @@ export function VerifyTranscriptReview(props: {
         "Your corrections were saved as a new transcript version.",
       )} type="button">Save corrections as new version</button>
       {transcript.approved
-        ? <p role="status">Approved by storyteller for this exact transcript version.</p>
+        ? <><p role="status">Approved by storyteller for this exact transcript version.</p><a className="button button--primary" href={`/story/${props.storyId}/craft`}>Continue to Craft</a></>
         : <button className="button button--primary" disabled={busy} onClick={() => void act(
           `/api/stories/${props.storyId}/transcripts/${transcript.artifact_version_id}/approve`,
           { intent: "approve_source" },

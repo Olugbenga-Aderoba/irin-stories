@@ -16,7 +16,10 @@ DECLARE
   fallback_decision uuid;
   transcript_id uuid;
   edited_transcript_id uuid;
+  cut_id uuid;
+  v_transcript_segment_id uuid;
   approval_result record;
+  cut_approval_result record;
   proposal1 uuid;
   proposal2 uuid;
   result_row record;
@@ -231,6 +234,21 @@ BEGIN
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Timestamped AI-original transcript segment was not stored.'; END IF;
   SELECT * INTO approval_result FROM public.approve_yoruba_transcript(s3,a,transcript_id);
   IF approval_result.transcript_artifact_id<>transcript_id OR approval_result.approved_content_sha256<>encode(expected_hash,'hex') OR approval_result.approved_at IS NULL THEN RAISE EXCEPTION 'Transcript approval did not bind the sealed version hash.'; END IF;
+  SELECT id INTO v_transcript_segment_id FROM public.transcript_segments WHERE story_id=s3 AND transcript_artifact_id=transcript_id AND segment_number=1;
+  cut_id:=public.persist_story_cut(s3,a,src3,transcript_id,jsonb_build_array(jsonb_build_object(
+    'transcriptSegmentId',v_transcript_segment_id,'sourceStartMs',0,'sourceEndMs',1200,
+    'narrativeRole','Opening','selectionRationale','Synthetic database fixture')),
+    decode(repeat('ab',32),'hex'),NULL);
+  SELECT count(*) INTO rows_visible FROM public.story_cut_segments cut_segment WHERE cut_segment.story_id=s3 AND cut_segment.cut_artifact_id=cut_id
+    AND cut_segment.transcript_segment_id=v_transcript_segment_id AND cut_segment.source_start_ms=0 AND cut_segment.source_end_ms=1200
+    AND cut_segment.output_start_ms=0 AND cut_segment.output_end_ms=1200;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Story Cut exact transcript timestamp lineage was not preserved.'; END IF;
+  SELECT * INTO cut_approval_result FROM public.approve_story_cut(s3,a,cut_id);
+  IF cut_approval_result.cut_artifact_id<>cut_id OR cut_approval_result.approved_content_sha256<>encode(decode(repeat('ab',32),'hex'),'hex') OR cut_approval_result.approved_at IS NULL THEN RAISE EXCEPTION 'Story Cut approval did not bind the exact sealed hash.'; END IF;
+  BEGIN PERFORM * FROM public.approve_story_cut(s3,b,cut_id); RAISE EXCEPTION 'Cross-owner Story Cut approval was unexpectedly allowed.'; EXCEPTION WHEN SQLSTATE '42501' THEN NULL; END;
+  SELECT count(*) INTO rows_visible FROM public.audit_events WHERE story_id=s3 AND event_type='STORY_CUT_APPROVED' AND artifact_version_id=cut_id;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Story Cut approval audit event is missing.'; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('test','Story Cut uses exact approved transcript segment timestamps and owner approval binds sealed hash','passed',true));
   BEGIN
     PERFORM * FROM public.approve_yoruba_transcript(s3,b,transcript_id);
     RAISE EXCEPTION 'Cross-owner transcript approval was unexpectedly allowed.';
@@ -260,6 +278,10 @@ BEGIN
   IF rows_visible<>1 THEN RAISE EXCEPTION 'Replacing the source deleted historical transcript approval.'; END IF;
   BEGIN PERFORM * FROM public.approve_yoruba_transcript(s3,a,edited_transcript_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
   IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate transcript approval applicability.'; END IF;
+  BEGIN PERFORM * FROM public.approve_story_cut(s3,a,cut_id); code:='unexpected success'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code=RETURNED_SQLSTATE; END;
+  IF code<>'42501' THEN RAISE EXCEPTION 'Source replacement did not invalidate Story Cut approval applicability.'; END IF;
+  SELECT count(*) INTO rows_visible FROM public.story_cut_approvals WHERE story_id=s3 AND cut_artifact_id=cut_id AND approved_by=a;
+  IF rows_visible<>1 THEN RAISE EXCEPTION 'Historical Story Cut approval was lost after source replacement.'; END IF;
   PERFORM set_config('request.jwt.claim.role','authenticated',true); PERFORM set_config('request.jwt.claim.sub',a::text,true); PERFORM set_config('role','authenticated',true);
   SELECT count(*) INTO rows_visible FROM public.source_language_reviews WHERE story_id=s3 AND detected_language_code='yor';
   IF rows_visible<>0 THEN RAISE EXCEPTION 'Fallback created a fake AI proposal.'; END IF;
